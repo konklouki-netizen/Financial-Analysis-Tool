@@ -1,0 +1,13 @@
+# Αυτό λέει στο Git να αγνοήσει το virtual environment
+venv/
+__pycache__/
+
+# Αγνοούμε προσωρινά αρχεία
+temp/
+*.log
+
+# Αγνοούμε τα PDF που κατεβάζουμε
+temp/*.pdf
+
+# Ρυθμίσεις του VS Code
+.vscode/
