@@ -2,4 +2,6 @@ streamlit
 pandas
 plotly
 yfinance
-reportlab
+fpdf
+openpyxl
+PyMuPDF
