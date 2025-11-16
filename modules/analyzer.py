@@ -1,181 +1,124 @@
-# ==========================================
-# 📊 modules/analyzer.py — Version 3.1 (Smarter Gross Profit)
-# ==========================================
+# modules/analyzer.py (v3.7 - Διόρθωση PyArrow Error)
 import pandas as pd
 import numpy as np
-from typing import Optional
 
-# ==========================================
-# 🔹 Helper Functions
-# ==========================================
-
-def safe_divide(numerator, denominator):
-    try:
-        num = pd.to_numeric(numerator, errors='coerce')
-        den = pd.to_numeric(denominator, errors='coerce').replace(0, np.nan)
-        if den is None or den.empty or num is None or num.empty:
-            return pd.Series([np.nan] * len(numerator), index=numerator.index)
-        return num / den
-    except Exception:
-        try:
-            return pd.Series([np.nan] * len(numerator), index=numerator.index)
-        except:
-             return pd.Series([np.nan]) 
-
-def get_col(df, col_name):
-    if col_name in df.columns:
-        return df[col_name]
-    else:
-        return pd.Series([np.nan] * len(df), index=df.index, name=col_name)
-
-# ==========================================
-# 🔹 Υπολογισμός Χρηματοοικονομικών Δεικτών
-# ==========================================
-
-def calculate_financial_ratios(
-    company_df: pd.DataFrame, 
-    sector: str = "General", 
-    competitor_df: Optional[pd.DataFrame] = None, 
-    competitor_sector: str = "General"
-):
-    
-    if company_df is None or company_df.empty:
-        print("⚠️ Analyzer: παρέλαβε κενό DataFrame.")
-        return {"ratios": pd.DataFrame(), "categories": {}, "sector": sector}
-
-    ratios = pd.DataFrame()
-    
-    if 'Year' in company_df.columns:
-        year_date_cols = ['Year']
-        if 'Date' in company_df.columns:
-             year_date_cols.append('Date')
-        ratios_index_data = company_df[year_date_cols]
-        company_df = company_df.set_index('Year').copy() 
-    else:
-        ratios_index_data = pd.DataFrame({'Year': range(len(company_df))})
-        company_df = company_df.copy()
-        company_df.index = ratios_index_data['Year']
-        
-    ratios = pd.DataFrame(index=company_df.index)
-
+def calculate_financial_ratios(df, sector="General"):
+    """
+    Υπολογίζει ένα σετ χρηματοοικονομικών δεικτών από ένα DataFrame.
+    """
     print(f"🏢 Analyzer: Υπολογισμός για κλάδο: {sector}")
-
-    # --- Υπολογισμοί δεικτών (Standard Ονόματα) ---
     
-    # Ρευστότητα
-    ratios['Current Ratio'] = safe_divide(get_col(company_df, 'CurrentAssets'), get_col(company_df, 'CurrentLiabilities'))
-    ratios['Quick Ratio'] = safe_divide(get_col(company_df, 'CurrentAssets') - get_col(company_df, 'Inventory').fillna(0), get_col(company_df, 'CurrentLiabilities'))
-    ratios['Cash Ratio'] = safe_divide(get_col(company_df, 'Cash'), get_col(company_df, 'CurrentLiabilities'))
+    # Αρχικοποίηση λίστας για τα αποτελέσματα
+    all_ratios = []
 
-    # Μόχλευση (Debt)
-    debt_col = get_col(company_df, 'TotalDebt')
-    if debt_col.isnull().all():
-        debt_col = get_col(company_df, 'TotalLiabilities')
+    # v3.7 FIX: ΒΕΒΑΙΩΝΟΜΑΣΤΕ ότι η στήλη 'Date' (Timestamp) ΔΕΝ θα μπει στους υπολογισμούς
+    if 'Date' in df.columns:
+        df = df.drop(columns=['Date'])
         
-    ratios['Debt to Equity'] = safe_divide(debt_col, get_col(company_df, 'TotalEquity'))
-    ratios['Debt to Assets'] = safe_divide(debt_col, get_col(company_df, 'TotalAssets'))
-
-    # Κερδοφορία
-    # === v3.1 FIX: Υπολογίζουμε το GrossProfit αν λείπει ===
-    revenue = get_col(company_df, 'Revenue')
-    gross_profit = get_col(company_df, 'GrossProfit')
-    if gross_profit.isnull().all(): # Αν λείπει η στήλη GrossProfit
-        cost_of_goods = get_col(company_df, 'CostOfGoodsSold')
-        if not cost_of_goods.isnull().all():
-            print("Info: Υπολογισμός 'GrossProfit' από 'Revenue' - 'CostOfGoodsSold'.")
-            gross_profit = revenue - cost_of_goods
-    # ===================================================
-    
-    ratios['Gross Profit Margin'] = safe_divide(gross_profit, revenue)
-    ratios['Operating Margin'] = safe_divide(get_col(company_df, 'OperatingIncome'), revenue)
-    ratios['Net Profit Margin'] = safe_divide(get_col(company_df, 'NetIncome'), revenue)
-
-    # Απόδοση
-    ratios['ROA'] = safe_divide(get_col(company_df, 'NetIncome'), get_col(company_df, 'TotalAssets'))
-    ratios['ROE'] = safe_divide(get_col(company_df, 'NetIncome'), get_col(company_df, 'TotalEquity'))
-
-    # Αποδοτικότητα
-    ratios['Asset Turnover'] = safe_divide(revenue, get_col(company_df, 'TotalAssets'))
-    ratios['Inventory Turnover'] = safe_divide(get_col(company_df, 'CostOfGoodsSold'), get_col(company_df, 'Inventory'))
-
-    # Premium/Market
-    ratios['EPS'] = safe_divide(get_col(company_df, 'NetIncome'), get_col(company_df, 'SharesOutstanding'))
-    ratios['Operating Cash Flow Ratio'] = safe_divide(get_col(company_df, 'OperatingCashFlow'), get_col(company_df, 'CurrentLiabilities'))
-
-    # --- Ειδικοί δείκτες ανά κλάδο ---
-    if 'Bank' in sector or 'Financial' in sector:
-        ratios['Loan to Deposit'] = safe_divide(get_col(company_df, 'Loans'), get_col(company_df, 'Deposits'))
-        ratios['Net Interest Margin'] = safe_divide(get_col(company_df, 'NetInterestIncome'), get_col(company_df, 'AverageEarningAssets'))
-    elif 'Technology' in sector or 'Software' in sector:
-        ratios['R&D to Sales'] = safe_divide(get_col(company_df, 'R&D'), revenue)
-    elif 'Auto' in sector or 'Vehicles' in sector:
-        ratios['Inventory to Sales'] = safe_divide(get_col(company_df, 'Inventory'), revenue)
-    elif 'Energy' in sector or 'Oil' in sector:
-        ratios['Production Efficiency'] = safe_divide(get_col(company_df, 'OilProduction').fillna(0) + get_col(company_df, 'GasProduction').fillna(0), get_col(company_df, 'OperatingExpenses'))
-
-    # --- Οργάνωση δεικτών ανά κατηγορία ---
-    categories = {
-        'Liquidity': ['Current Ratio', 'Quick Ratio', 'Cash Ratio'],
-        'Debt': ['Debt to Equity', 'Debt to Assets'],
-        'Profitability': ['Gross Profit Margin', 'Operating Margin', 'Net Profit Margin'],
-        'Return': ['ROA', 'ROE', 'EPS'],
-        'Efficiency': ['Asset Turnover', 'Inventory Turnover', 'Operating Cash Flow Ratio']
-    }
-    
-    sector_specific_cats = {
-        'Banking': ['Loan to Deposit', 'Net Interest Margin'],
-        'Technology': ['R&D to Sales'],
-        'Automotive': ['Inventory to Sales'],
-        'Energy': ['Production Efficiency']
-    }
-    
-    for cat_name, cat_cols in sector_specific_cats.items():
-        if any(col in ratios.columns for col in cat_cols):
-            categories[cat_name] = cat_cols
-
-    ratios.reset_index(inplace=True)
-    if 'Date' in ratios_index_data.columns and 'Date' not in ratios.columns:
-        ratios = pd.merge(ratios, ratios_index_data, on='Year', how='left')
-
-
-    organized = {}
-    for cat, cols in categories.items():
-        display_cols = ['Year']
-        if 'Date' in ratios.columns:
-            display_cols.append('Date')
-            
-        valid_cols = [col for col in cols if col in ratios.columns and not ratios[col].isnull().all()]
-        if valid_cols:
-            display_cols.extend(valid_cols)
-            organized[cat] = ratios[display_cols]
-
-    # --- Αν υπάρχει ανταγωνιστής ---
-    if competitor_df is not None and not competitor_df.empty:
-        print("⚔️ Υπολογισμός συγκριτικών δεικτών με ανταγωνιστή...")
-        competitor_result = calculate_financial_ratios(
-            competitor_df, 
-            sector=competitor_sector
-        )
-        competitor_ratios = competitor_result.get("ratios")
+    # Σιγουρευόμαστε ότι τα 'Year' είναι index για εύκολη πρόσβαση
+    if 'Year' in df.columns:
+        df = df.set_index('Year')
         
-        if competitor_ratios is not None and not competitor_ratios.empty:
-            comp_cols = {col: f"Comp_{col}" for col in competitor_ratios.columns if col not in ['Year', 'Date']}
-            competitor_ratios_renamed = competitor_ratios.rename(columns=comp_cols)
-            ratios = pd.merge(ratios, competitor_ratios_renamed, on='Year', how='left', suffixes=('', '_Comp'))
-            
-            for col in categories['Profitability'] + categories['Return'] + categories['Efficiency']:
-                if col in ratios.columns and f"Comp_{col}" in ratios.columns:
-                    ratios[f"Diff_{col}"] = ratios[col] - ratios[f"Comp_{col}"]
+    df = df.sort_index(ascending=False) # Ταξινόμηση (νεότερο πρώτα)
 
-    ratios = ratios.round(3)
-    ratios['Sector'] = sector
-    if 'Sector' in ratios.columns:
-        cols = ratios.columns.tolist()
-        cols.insert(1, cols.pop(cols.index('Sector')))
-        ratios = ratios[cols]
+    for year in df.index:
+        try:
+            row = df.loc[year]
+            
+            # --- Βασικά Δεδομένα ---
+            revenue = pd.to_numeric(row.get('Revenue'), errors='coerce')
+            cogs = pd.to_numeric(row.get('CostOfGoodsSold'), errors='coerce')
+            op_income = pd.to_numeric(row.get('OperatingIncome'), errors='coerce')
+            net_income = pd.to_numeric(row.get('NetIncome'), errors='coerce')
+            
+            current_assets = pd.to_numeric(row.get('CurrentAssets'), errors='coerce')
+            current_liab = pd.to_numeric(row.get('CurrentLiabilities'), errors='coerce')
+            total_assets = pd.to_numeric(row.get('TotalAssets'), errors='coerce')
+            total_liab = pd.to_numeric(row.get('TotalLiabilities'), errors='coerce')
+            total_equity = pd.to_numeric(row.get('TotalEquity'), errors='coerce')
+            
+            cash = pd.to_numeric(row.get('Cash'), errors='coerce')
+            inventory = pd.to_numeric(row.get('Inventory'), errors='coerce')
+            op_cash_flow = pd.to_numeric(row.get('OperatingCashFlow'), errors='coerce')
+            
+            # Υπολογισμός Gross Profit
+            if pd.isna(cogs):
+                gross_profit = pd.to_numeric(row.get('GrossProfit'), errors='coerce')
+                if not pd.isna(gross_profit):
+                    cogs = revenue - gross_profit
+            else:
+                gross_profit = revenue - cogs
+
+            # --- 1. Δείκτες Ρευστότητας (Liquidity) ---
+            current_ratio = current_assets / current_liab
+            quick_ratio = (current_assets - inventory) / current_liab if not pd.isna(inventory) else np.nan
+            cash_ratio = cash / current_liab if not pd.isna(cash) else np.nan
+
+            # --- 2. Δείκτες Μόχλευσης (Leverage) ---
+            debt_to_equity = total_liab / total_equity
+            debt_to_assets = total_liab / total_assets
+
+            # --- 3. Δείκτες Αποδοτικότητας (Profitability) ---
+            gross_profit_margin = gross_profit / revenue
+            operating_margin = op_income / revenue
+            net_profit_margin = net_income / revenue
+
+            # --- 4. Δείκτες Απόδοσης (Efficiency/Returns) ---
+            return_on_assets_roa = net_income / total_assets
+            return_on_equity_roe = net_income / total_equity
+            asset_turnover = revenue / total_assets
+
+            ratios = {
+                "Year": int(year),
+                "Sector": sector,
+                
+                # Liquidity
+                "Current Ratio": current_ratio,
+                "Quick Ratio": quick_ratio,
+                "Cash Ratio": cash_ratio,
+                
+                # Leverage
+                "Debt to Equity": debt_to_equity,
+                "Debt to Assets": debt_to_assets,
+                
+                # Profitability
+                "Gross Profit Margin": gross_profit_margin,
+                "Operating Margin": operating_margin,
+                "Net Profit Margin": net_profit_margin,
+                
+                # Efficiency/Returns
+                "Return on Assets (ROA)": return_on_assets_roa,
+                "Return on Equity (ROE)": return_on_equity_roe,
+                "Asset Turnover": asset_turnover,
+            }
+            all_ratios.append(ratios)
+
+        except Exception as e:
+            print(f"⚠️ Analyzer Warning: Αποτυχία υπολογισμού δεικτών για το έτος {year}: {e}")
+            continue
+
+    if not all_ratios:
+        print("❌ Analyzer Error: Δεν μπόρεσε να υπολογιστεί κανένας δείκτης.")
+        return {"ratios": pd.DataFrame(), "categories": {}}
+
+    # --- Δημιουργία Πινάκων ---
+    ratios_df = pd.DataFrame(all_ratios)
+    ratios_df = ratios_df.replace([np.inf, -np.inf], np.nan) 
+    
+    # --- Ομαδοποίηση (v1.20) ---
+    categories = {}
+    
+    liquidity_cols = ['Year', 'Current Ratio', 'Quick Ratio', 'Cash Ratio']
+    leverage_cols = ['Year', 'Debt to Equity', 'Debt to Assets']
+    profitability_cols = ['Year', 'Gross Profit Margin', 'Operating Margin', 'Net Profit Margin']
+    efficiency_cols = ['Year', 'Return on Assets (ROA)', 'Return on Equity (ROE)', 'Asset Turnover']
+
+    categories["Ρευστότητα (Liquidity)"] = ratios_df[[col for col in liquidity_cols if col in ratios_df.columns]].copy()
+    categories["Μόχλευση (Leverage)"] = ratios_df[[col for col in leverage_cols if col in ratios_df.columns]].copy()
+    categories["Κερδοφορία (Profitability)"] = ratios_df[[col for col in profitability_cols if col in ratios_df.columns]].copy()
+    categories["Απόδοση (Efficiency)"] = ratios_df[[col for col in efficiency_cols if col in ratios_df.columns]].copy()
 
     return {
-        "ratios": ratios,
-        "categories": organized,
-        "sector": sector
+        "ratios": ratios_df,
+        "categories": categories
     }
