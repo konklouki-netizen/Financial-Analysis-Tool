@@ -8,7 +8,6 @@ import re
 import io
 
 # === v3.8: ΝΕΕΣ ΕΙΣΑΓΩΓΕΣ ΓΙΑ ΚΛΑΔΟ ===
-from finvizfinance.group import Group
 from finvizfinance.screener import Screener
 # === === === === === === === === ===
 
