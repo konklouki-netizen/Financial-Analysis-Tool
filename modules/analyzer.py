@@ -1,4 +1,4 @@
-# modules/analyzer.py (v3.7 - Διόρθωση PyArrow Error)
+# modules/analyzer.py (v3.7 - Διόρθωση PyArrow/Date Error)
 import pandas as pd
 import numpy as np
 
@@ -43,6 +43,7 @@ def calculate_financial_ratios(df, sector="General"):
             
             # Υπολογισμός Gross Profit
             if pd.isna(cogs):
+                # Αν δεν υπάρχει COGS, προσπαθούμε να το βρούμε από το GrossProfit (αν υπάρχει)
                 gross_profit = pd.to_numeric(row.get('GrossProfit'), errors='coerce')
                 if not pd.isna(gross_profit):
                     cogs = revenue - gross_profit

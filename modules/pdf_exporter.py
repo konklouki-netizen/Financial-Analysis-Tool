@@ -18,10 +18,16 @@ class PDF(FPDF):
             self.font_name = "Arial"
             try:
                 # Το fpdf2 (που εγκαθίσταται ως "fpdf") υποστηρίζει uni=True
-                self.add_font("Arial", "", "Arial.ttf", uni=True)
+                # Προσπαθούμε να βρούμε ένα default font path του Codespace
+                font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+                if not os.path.exists(font_path):
+                     # Fallback αν το Codespace αλλάξει
+                     font_path = "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+                
+                self.add_font("Arial", "", font_path, uni=True)
             except RuntimeError:
-                # Fallback αν δεν βρει το Arial.ttf
-                print("Warning: Arial.ttf not found. Falling back to built-in font (Ελληνικά μπορεί να μην εμφανίζονται).")
+                # Fallback αν δεν βρει ΚΑΝΕΝΑ font
+                print("Warning: Arial.ttf/DejaVuSans.ttf not found. Falling back to built-in font (Ελληνικά μπορεί να μην εμφανίζονται).")
                 self.font_name = "helvetica"
 
             self.set_font(self.font_name, 'B', 12)
