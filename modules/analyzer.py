@@ -1,179 +1,157 @@
-# modules/analyzer.py (v5.0 - The Forensic Edition: Z-Score + M-Score)
+# modules/analyzer.py (v6.0 - The Core Financials Architecture)
 import pandas as pd
 import numpy as np
 
 def calculate_financial_ratios(df: pd.DataFrame, sector: str = "General") -> dict:
     if df.empty: return {}
 
-    # Sort data (Newest first)
+    # Ταξινόμηση (Το πιο πρόσφατο έτος πρώτο)
     df = df.sort_values(by='Year', ascending=False).reset_index(drop=True)
     
-    # Get Current Year (t) and Previous Year (t-1)
+    # Τρέχον Έτος (t) και Προηγούμενο (t-1) για Growth metrics
     t = df.iloc[0]
-    try: 
-        t_minus_1 = df.iloc[1]
-    except IndexError: 
-        t_minus_1 = t # Fallback αν έχουμε μόνο 1 έτος (δεν θα δουλέψουν τα trends)
+    try: t_prev = df.iloc[1]
+    except IndexError: t_prev = t 
+
+    # --- Helper Functions ---
+    def get_val(source, key, default=0):
+        # Προσπάθεια εύρεσης της στήλης (αγνοεί πεζά/κεφαλαία)
+        try:
+            val = pd.to_numeric(source.get(key, default), errors='coerce')
+            return 0 if pd.isna(val) else float(val)
+        except:
+            return 0
 
     def safe_div(a, b):
-        try: return float(a) / float(b) if float(b) != 0 else 0
-        except (ValueError, TypeError): return 0
+        return a / b if b != 0 else 0
 
-    def get_val(source, key, default=0):
-        return pd.to_numeric(source.get(key, default), errors='coerce')
-
-    results = {}
-
-    # === DATA EXTRACTION ===
-    # Current Year (t)
-    net_income = get_val(t, 'NetIncome')
-    cfo = get_val(t, 'OperatingCashFlow')
+    # === 1. DATA EXTRACTION (ΒΑΣΙΚΑ ΔΕΔΟΜΕΝΑ) ===
+    # Income Statement
     revenue = get_val(t, 'Revenue')
-    receivables = get_val(t, 'CurrentAssets') # Proxy for receivables if specific column missing
-    if 'AccountsReceivable' in t: receivables = get_val(t, 'AccountsReceivable')
-    
     cogs = get_val(t, 'CostOfGoodsSold')
-    total_assets = get_val(t, 'TotalAssets')
+    gross_profit = get_val(t, 'GrossProfit')
+    ebit = get_val(t, 'OperatingIncome')
+    net_income = get_val(t, 'NetIncome')
+    interest = abs(get_val(t, 'InterestExpense'))
+    
+    # Balance Sheet
+    receivables = get_val(t, 'Receivables') or get_val(t, 'AccountsReceivable') or get_val(t, 'CurrentAssets') * 0.2 # Fallback
+    inventory = get_val(t, 'Inventory')
+    payables = get_val(t, 'Payables') or get_val(t, 'AccountsPayable') or get_val(t, 'CurrentLiabilities') * 0.2 # Fallback
+    
     current_assets = get_val(t, 'CurrentAssets')
     current_liabilities = get_val(t, 'CurrentLiabilities')
-    total_liabilities = get_val(t, 'TotalLiabilities', get_val(t, 'TotalDebt'))
-    total_equity = get_val(t, 'TotalEquity')
-    ppe = get_val(t, 'NetPPE', get_val(t, 'GrossPPE', 0)) # Property Plant Equipment
-    securities = get_val(t, 'InvestmentSecurities', 0)
-    
-    # Previous Year (t-1)
-    rev_prev = get_val(t_minus_1, 'Revenue')
-    rec_prev = get_val(t_minus_1, 'CurrentAssets')
-    if 'AccountsReceivable' in t_minus_1: rec_prev = get_val(t_minus_1, 'AccountsReceivable')
-    cogs_prev = get_val(t_minus_1, 'CostOfGoodsSold')
-    assets_prev = get_val(t_minus_1, 'TotalAssets')
-
-    # Handling NaNs
-    if pd.isna(net_income): net_income = 0
-    if pd.isna(cfo): cfo = 0
-
-    # === PILLAR 1: QUALITY ===
-    earnings_gap = net_income - cfo
-    is_paper_profits = cfo < net_income
-    results['Pillar_1'] = {
-        'Net_Income': net_income, 'CFO': cfo, 'Gap': earnings_gap,
-        'Is_Paper_Profits': is_paper_profits,
-        'Flag': "🔴 RED FLAG" if is_paper_profits else "🟢 OK"
-    }
-
-    # === PILLAR 2: LIQUIDITY ===
-    dso = safe_div(receivables, revenue) * 365
-    ebit = get_val(t, 'OperatingIncome')
-    interest = abs(get_val(t, 'InterestExpense'))
-    int_coverage = safe_div(ebit, interest)
-
-    results['Pillar_2'] = {
-        'DSO': round(dso, 1),
-        'Interest_Coverage': round(int_coverage, 2),
-        'Flag_Solvency': "🔴 ZOMBIE FIRM?" if (int_coverage < 1.5 and int_coverage > 0) else "🟢 SOLVENT"
-    }
-
-    # === PILLAR 3: DUPONT ===
-    net_margin = safe_div(net_income, revenue)
-    asset_turnover = safe_div(revenue, total_assets)
-    equity_multiplier = safe_div(total_assets, total_equity)
-    roe = net_margin * asset_turnover * equity_multiplier
-
-    results['Pillar_3'] = {
-        'Net_Margin': round(net_margin * 100, 2),
-        'Asset_Turnover': round(asset_turnover, 3),
-        'Leverage': round(equity_multiplier, 2),
-        'ROE': round(roe * 100, 2),
-    }
-
-    # === PILLAR 4: GROWTH & RISK ===
-    sgr = roe 
-    sales_growth = safe_div((revenue - rev_prev), rev_prev)
-    rec_growth = safe_div((receivables - rec_prev), rec_prev)
-    
-    # Forensic Check: Receivables growing faster than Sales?
-    stuffing_channel = rec_growth > (sales_growth * 1.2) # 20% faster is suspicious
-
-    results['Pillar_4'] = {
-        'SGR': round(sgr * 100, 2),
-        'Actual_Growth': round(sales_growth * 100, 2),
-        'Receivables_Growth': round(rec_growth * 100, 2),
-        'Overtrading': stuffing_channel
-    }
-
-    # === PILLAR 5: VALUATION ===
-    market_cap = get_val(t, 'Market Cap')
-    pe_ratio = safe_div(market_cap, net_income) if market_cap > 0 else 0
-    wacc = 0.10
+    total_assets = get_val(t, 'TotalAssets')
+    total_equity = get_val(t, 'TotalEquity') or get_val(t, 'StockholdersEquity')
     total_debt = get_val(t, 'TotalDebt')
-    invested_capital = total_equity + total_debt - get_val(t, 'Cash')
-    nopat = ebit * 0.75 
-    eva = nopat - (invested_capital * wacc)
+    
+    # Cash Flow
+    cfo = get_val(t, 'OperatingCashFlow')
+    cfi = get_val(t, 'InvestingCashFlow')
+    cff = get_val(t, 'FinancingCashFlow')
+    # Προσπάθεια εύρεσης CAPEX (συνήθως αρνητικό στο Investing, το θέλουμε θετικό για την αφαίρεση)
+    capex = abs(get_val(t, 'CapitalExpenditures') or get_val(t, 'CapEx') or 0)
 
-    results['Pillar_5'] = {
-        'PE_Ratio': round(pe_ratio, 2),
-        'EVA': round(eva / 1e6, 2),
-        'Invested_Capital': invested_capital,
-        'NOPAT': nopat,
-        'Value_Creation': "🟢 CREATING" if eva > 0 else "🔴 DESTROYING"
+    # === ΚΑΤΗΓΟΡΙΑ 1: Ο ΚΟΡΜΟΣ (CORE FINANCIALS) ===
+    
+    # 1. Κατάσταση Ταμειακών Ροών
+    fcf = cfo - capex
+    
+    cash_flow_metrics = {
+        'CFO': cfo,
+        'CFI': cfi,
+        'CFF': cff,
+        'FCF': fcf,
+        'CAPEX': capex
     }
 
-    # === FORENSIC MODEL 1: ALTMAN Z-SCORE (Bankruptcy) ===
+    # 2. Δείκτες Δραστηριότητας / Κύκλοι (Efficiency)
+    dso = safe_div(receivables, revenue) * 365
+    dsi = safe_div(inventory, cogs) * 365
+    dpo = safe_div(payables, cogs) * 365
+    ccc = dso + dsi - dpo
+    
+    efficiency_metrics = {
+        'DSO': round(dso, 0),
+        'DSI': round(dsi, 0),
+        'DPO': round(dpo, 0),
+        'CCC': round(ccc, 0)
+    }
+
+    # 3. Δείκτες Ρευστότητας (Liquidity)
+    current_ratio = safe_div(current_assets, current_liabilities)
+    quick_ratio = safe_div(current_assets - inventory, current_liabilities)
+    
+    liquidity_metrics = {
+        'Current_Ratio': round(current_ratio, 2),
+        'Quick_Ratio': round(quick_ratio, 2)
+    }
+
+    # 4. Δείκτες Φερεγγυότητας (Solvency)
+    debt_to_equity = safe_div(total_debt, total_equity)
+    int_coverage = safe_div(ebit, interest)
+    
+    solvency_metrics = {
+        'Debt_to_Equity': round(debt_to_equity, 2),
+        'Interest_Coverage': round(int_coverage, 2)
+    }
+
+    # 5. Δείκτες Κερδοφορίας (Profitability)
+    gross_margin = safe_div(revenue - cogs, revenue) * 100
+    oper_margin = safe_div(ebit, revenue) * 100
+    net_margin = safe_div(net_income, revenue) * 100
+    
+    profitability_metrics = {
+        'Gross_Margin': round(gross_margin, 2),
+        'Operating_Margin': round(oper_margin, 2),
+        'Net_Margin': round(net_margin, 2)
+    }
+
+    # === ΚΑΤΗΓΟΡΙΑ 2: FORENSICS (Z-Score, M-Score, Dupont) ===
+    # (Τα κρατάμε γιατί είναι η "ψυχή" του ValuePy)
+    
+    # Altman Z-Score Components
     working_capital = current_assets - current_liabilities
     retained_earnings = get_val(t, 'RetainedEarnings')
+    market_cap = get_val(t, 'Market Cap')
+    total_liabilities = get_val(t, 'TotalLiabilities') or total_debt
     
     A = safe_div(working_capital, total_assets)
     B = safe_div(retained_earnings, total_assets)
     C = safe_div(ebit, total_assets)
-    D = safe_div(market_cap, total_liabilities) 
+    D = safe_div(market_cap, total_liabilities)
     E = safe_div(revenue, total_assets)
-    
-    z_score = (1.2 * A) + (1.4 * B) + (3.3 * C) + (0.6 * D) + (1.0 * E)
-    results['Z_Score'] = round(z_score, 2)
+    z_score = (1.2*A) + (1.4*B) + (3.3*C) + (0.6*D) + (1.0*E)
 
-    # === FORENSIC MODEL 2: BENEISH M-SCORE (Manipulation) ===
-    # Χρησιμοποιούμε μια απλοποιημένη έκδοση 5 μεταβλητών για σταθερότητα
+    # Beneish M-Score (Simplified)
+    # Χρειαζόμαστε τα t_prev για να δούμε αν "μαγειρεύουν"
+    rev_prev = get_val(t_prev, 'Revenue')
+    rec_prev = get_val(t_prev, 'Receivables') or get_val(t_prev, 'AccountsReceivable') or get_val(t_prev, 'CurrentAssets')*0.2
     
-    # 1. DSRI (Days Sales in Receivables Index): (Rec_t/Rev_t) / (Rec_t-1/Rev_t-1)
-    dsri = safe_div(safe_div(receivables, revenue), safe_div(rec_prev, rev_prev))
-    
-    # 2. GMI (Gross Margin Index): (Gross_t-1/Rev_t-1) / (Gross_t/Rev_t)
-    gross_t = revenue - cogs
-    gross_prev = rev_prev - cogs_prev
-    gmi = safe_div(safe_div(gross_prev, rev_prev), safe_div(gross_t, revenue))
-    
-    # 3. AQI (Asset Quality Index): Non-Current Assets / Total Assets ratio change
-    non_curr_t = total_assets - current_assets
-    non_curr_prev = assets_prev - get_val(t_minus_1, 'CurrentAssets')
-    aqi = safe_div(safe_div(non_curr_t, total_assets), safe_div(non_curr_prev, assets_prev))
-    
-    # 4. SGI (Sales Growth Index): Rev_t / Rev_t-1
-    sgi = safe_div(revenue, rev_prev)
-    
-    # 5. LVGI (Leverage Index)
-    lev_t = safe_div(total_liabilities, total_assets)
-    lev_prev = safe_div(get_val(t_minus_1, 'TotalLiabilities', get_val(t_minus_1, 'TotalDebt')), assets_prev)
-    lvgi = safe_div(lev_t, lev_prev)
+    dsri = safe_div(safe_div(receivables, revenue), safe_div(rec_prev, rev_prev)) # Days Sales in Receivables Index
+    sgi = safe_div(revenue, rev_prev) # Sales Growth Index
+    # (Χρησιμοποιούμε μια απλή μορφή για σταθερότητα)
+    m_score = -4.84 + (0.92 * dsri) + (0.528 * sgi) # Basic M-Score Proxy
 
-    # Formula (5-variable version)
-    m_score = -6.065 + (0.823 * dsri) + (0.906 * gmi) + (0.593 * aqi) + (0.717 * sgi) + (0.107 * lvgi)
-    
-    # Αν λείπουν δεδομένα προηγούμενου έτους, το M-Score βγαίνει λάθος, οπότε βάζουμε -999 (Safe)
-    if rev_prev == 0 or assets_prev == 0:
-        m_score = -3.0 # Fake safe score
+    forensics_metrics = {
+        'Z_Score': round(z_score, 2),
+        'M_Score': round(m_score, 2),
+        'Health_Score': 0 # Θα υπολογιστεί στο app.py ή εδώ αν θες
+    }
 
-    results['M_Score'] = round(m_score, 2)
-
-    # === HEALTH SCORE AGGREGATION ===
-    score = 0
-    if not is_paper_profits: score += 20
-    if int_coverage > 3: score += 10
-    if roe * 100 > 15: score += 15
-    if eva > 0: score += 15
-    if z_score > 2.99: score += 20 
-    if m_score < -2.22: score += 20 # Safe from manipulation
-    elif m_score < -1.78: score += 10 # Grey area
-    
-    results['Health_Score'] = score
-
-    return results
+    # === ΣΥΓΚΕΝΤΡΩΣΗ ΟΛΩΝ ===
+    return {
+        'Core': {
+            'Cash_Flow': cash_flow_metrics,
+            'Efficiency': efficiency_metrics,
+            'Liquidity': liquidity_metrics,
+            'Solvency': solvency_metrics,
+            'Profitability': profitability_metrics
+        },
+        'Forensics': forensics_metrics,
+        # Κρατάμε και τα flat keys για συμβατότητα με το τωρινό app.py μέχρι να το αλλάξουμε
+        'Pillar_1': {'Gap': net_income - cfo, 'Is_Paper_Profits': cfo < net_income, 'Net_Income': net_income, 'CFO': cfo},
+        'Pillar_2': {'DSO': dso, 'Flag_Solvency': "SOLVENT" if int_coverage > 1.5 else "ZOMBIE"},
+        'Pillar_3': {'ROE': round((net_margin/100) * (revenue/total_assets) * (total_assets/total_equity) * 100, 2)},
+        'Pillar_5': {'EVA': 0, 'Value_Creation': 'N/A', 'PE_Ratio': 0}
+    }
