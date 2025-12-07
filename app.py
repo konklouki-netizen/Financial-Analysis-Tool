@@ -1,721 +1,274 @@
-# app.py (v2.3 - Προσθήκη Μέσου Όρου Κλάδου (Industry Average))
+# app.py (v4.4 - The Complete Suite: History, Groups, PDF & Valuation)
 import streamlit as st
 import pandas as pd
 import os
 import sys
-import unicodedata 
-import datetime 
 import plotly.graph_objects as go 
-from typing import Tuple, List, Dict, Any, Optional
+import datetime
 
-# === v2.0: ΝΕΑ ΕΙΣΑΓΩΓΗ ===
-from finvizfinance.quote import finvizfinance
-# === === === === === === ===
-
-# === v1.25 FIX: Η "Αλεξίσφαιρη" Διόρθωση Path ===
+# === Setup ===
 script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.append(script_dir)
-# === === === === === === === === === ===
 
-# === Εισαγωγή PDF Exporter ===
 try:
-    from modules.pdf_exporter import create_pdf_report
-except ImportError:
-    st.error("ΚΡΙΣΙΜΟ ΣΦΑΛΜΑ: ΔΕΝ ΒΡΕΘΗΚΕ το 'modules/pdf_exporter.py'. Βεβαιώσου ότι το αρχείο υπάρχει στον φάκελο 'modules'.")
-    st.stop()
-# === === === === === === === === ===
-
-# === Εισαγωγή των "Εγκεφάλων" μας (v2.3) ===
-try:
-    # ΤΩΡΑ ΕΙΣΑΓΟΥΜΕ ΚΑΙ ΤΗ ΝΕΑ ΣΥΝΑΡΤΗΣΗ
-    from test_loader import resolve_to_ticker, load_company_info, get_company_df, normalize_dataframe, get_industry_tickers 
+    from test_loader import resolve_to_ticker, load_company_info, get_company_df, normalize_dataframe
     from modules.analyzer import calculate_financial_ratios
+    from modules.report_generator import create_pdf_bytes
 except ImportError as e:
-    st.error(f"ΚΡΙΣΙΜΟ ΣΦΑΛΜΑ: {e}")
-    st.error("Βεβαιώσου ότι τα 'app.py', 'test_loader.py', και ο φάκελος 'modules' είναι στον ίδιο κατάλογο.")
-    st.stop() 
-# === === === === === === === === ===
+    st.error(f"System Error: {e}")
+    st.stop()
 
-# === Ρύθμιση Σελίδας ===
-st.set_page_config(
-    page_title="Financial Analysis Tool v2.3", # <--- Νέα έκδοση
-    page_icon="📊",
-    layout="wide" 
-)
+st.set_page_config(page_title="ValuePy", page_icon="💎", layout="wide")
 
-# === v2.0: Αρχικοποίηση "Μνήμης" (Session State) ===
-if 'analysis_results' not in st.session_state:
-    st.session_state.analysis_results = None
-if 'analysis_inputs' not in st.session_state:
-    st.session_state.analysis_inputs = {}
-if 'company_info_loaded' not in st.session_state:
-    st.session_state.company_info_loaded = False
-if 'company_info_data' not in st.session_state:
-    st.session_state.company_info_data = {}
-# === === === === === === === === === ===
-
-# === v1.15: "Υπέρ-Έξυπνος Διαχωριστής" PDF ===
-def _find_and_merge_pdf_tables(raw_data_list: list) -> Tuple[pd.DataFrame, dict]:
-    """
-    Αυτός είναι ο "Υπέρ-Έξυπνος Διαχωριστής" (v1.15).
-    Καλείται **ΜΟΝΟ** για πηγές PDF.
-    """
-    st.info("🔎 Εκτέλεση 'Υπέρ-Έξυπνου Διαχωριστή' PDF (v1.15)...")
+# === CSS ===
+st.markdown("""
+<style>
+    .main { background-color: #ffffff; }
+    .hero-title { font-family: 'Helvetica Neue', sans-serif; font-size: 40px; font-weight: 700; text-align: center; color: #2c3e50; margin-top: 10px; }
+    .metric-card { background-color: white; border: 1px solid #f0f0f0; border-radius: 12px; padding: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); text-align: center; }
+    .metric-label { font-size: 12px; color: #95a5a6; font-weight: 600; text-transform: uppercase; }
+    .metric-value { font-size: 22px; font-weight: 800; color: #2c3e50; margin: 5px 0; }
+    .benchmark-val { font-size: 11px; color: #7f8c8d; font-style: italic; margin-top: 4px;}
     
-    INCOME_KEYS = ['income statement', 'κατασταση αποτελεσματων', 'results of operations', 'revenue', 'net income', 'έσοδα', 'κέρδη']
-    BALANCE_KEYS = ['balance sheet', 'ισολογισμοσ', 'financial position', 'total assets', 'total liabilities', 'ενεργητικό', 'υποχρεώσεις']
-    CASH_KEYS = ['cash flow', 'ταμειακεσ ροεσ', 'operating activities', 'investing activities', 'financing activities', 'operating cash flow']
+    div[role="radiogroup"] { flex-direction: row; justify-content: center; background-color: #f8f9fa; padding: 10px; border-radius: 10px; margin-bottom: 20px;}
+    div[data-testid="stRadio"] > label { display: none; }
+</style>
+""", unsafe_allow_html=True)
 
-    found_tables = {
-        "income": pd.DataFrame(),
-        "balance": pd.DataFrame(),
-        "cashflow": pd.DataFrame()
+# === STATE MANAGEMENT ===
+if 'history' not in st.session_state: st.session_state.history = [] 
+if 'current_group' not in st.session_state: st.session_state.current_group = None
+
+# === SIDEBAR (HISTORY) ===
+st.sidebar.title("📜 History")
+if st.sidebar.button("Clear History"):
+    st.session_state.history = []
+    st.session_state.current_group = None
+    st.rerun()
+
+st.sidebar.markdown("---")
+
+for i, group in enumerate(reversed(st.session_state.history)):
+    timestamp = group.get('time', '')
+    title = group.get('title', 'Analysis')
+    if st.sidebar.button(f"{title} ({timestamp})", key=f"hist_{i}"):
+        st.session_state.current_group = group
+        st.rerun()
+
+# === MAIN AREA ===
+st.markdown('<div class="hero-title">💎 ValuePy</div>', unsafe_allow_html=True)
+
+col_space_1, col_center, col_space_2 = st.columns([1, 2, 1])
+trigger_analysis = False
+input_mode = "Yahoo"
+ticker_in = None; competitors_in = None; file_in = None
+
+with col_center:
+    tab_search, tab_upload = st.tabs(["🔍 New Search", "📂 Upload File"])
+    with tab_search:
+        ticker_in = st.text_input("Main Ticker:", placeholder="e.g. MSFT, AEGN...", key="ticker_input")
+        with st.expander("⚔️ Add Competitors (Comparison)"):
+            competitors_in = st.text_input("Competitors (comma separated):", placeholder="e.g. GOOG, AMZN", key="comp_input")
+            
+        if st.button("Run Analysis", type="primary", use_container_width=True, key="btn_yahoo"):
+            trigger_analysis = True; input_mode = "Yahoo"
+    with tab_upload:
+        file_in = st.file_uploader("Report:", type=['pdf', 'xlsx'], key="file_uploader")
+        if file_in and st.button("Analyze File", type="primary", use_container_width=True, key="btn_file"):
+            trigger_analysis = True; input_mode = "File"
+
+# === ANALYSIS ENGINE ===
+if trigger_analysis:
+    timestamp = datetime.datetime.now().strftime("%H:%M")
+    
+    analysis_group = {
+        'time': timestamp,
+        'title': "",
+        'main_ticker': "",
+        'reports': {},
+        'benchmark': {}
     }
     
-    debug_log = {} 
+    sector_stats = {'Net_Margin': [], 'ROE': [], 'PE_Ratio': [], 'DSO': []}
 
-    # 1. Βρες τους 3 πίνακες
-    for item in raw_data_list:
-        title = item.get("title", "").lower()
-        table_df = item.get("table")
-        
-        if table_df is None or table_df.empty:
-            continue
-            
+    with st.spinner("Processing Analysis Group..."):
         try:
-            if table_df.shape[1] > 0:
-                first_col_content = " ".join(table_df.iloc[:, 0].astype(str)).lower()
-            else:
-                first_col_content = ""
-        except Exception:
-            first_col_content = "" 
-
-        search_corpus = title + " " + first_col_content
-
-        if any(key in search_corpus for key in INCOME_KEYS) and found_tables["income"].empty:
-            st.write(f"✅ Βρέθηκε ο Πίνακας 'Income' (Τίτλος: {title})")
-            found_tables["income"] = table_df
-            debug_log["Income Statement (Raw)"] = table_df
-            
-        elif any(key in search_corpus for key in BALANCE_KEYS) and found_tables["balance"].empty:
-            st.write(f"✅ Βρέθηκε ο Πίνακας 'Balance' (Τίτλος: {title})")
-            found_tables["balance"] = table_df
-            debug_log["Balance Sheet (Raw)"] = table_df
-
-        elif any(key in search_corpus for key in CASH_KEYS) and found_tables["cashflow"].empty:
-            st.write(f"✅ Βρέθηκε ο Πίνακας 'CashFlow' (Τίτλος: {title})")
-            found_tables["cashflow"] = table_df
-            debug_log["Cash Flow (Raw)"] = table_df
-
-    # 2. "Μετάφρασε" (Pivot/Normalize) τους 3 πίνακες
-    final_dfs = []
-
-    if not found_tables["income"].empty:
-        st.write("...Μεταφράζεται ο Πίνακας 'Income'...")
-        df = normalize_dataframe(found_tables["income"], source_type="pdf") 
-        if not df.empty:
-            final_dfs.append(df)
-            debug_log["Income Statement (Normalized)"] = df
-        else:
-             st.warning("   > Η 'Μετάφραση' του Income απέτυχε (π.χ. δεν βρήκε χρονιές).")
-
-            
-    if not found_tables["balance"].empty:
-        st.write("...Μεταφράζεται ο Πίνακας 'Balance'...")
-        df = normalize_dataframe(found_tables["balance"], source_type="pdf")
-        if not df.empty:
-            final_dfs.append(df)
-            debug_log["Balance Sheet (Normalized)"] = df
-        else:
-             st.warning("   > Η 'Μετάφραση' του Balance απέτυχε (π.χ. δεν βρήκε χρονιές).")
-
-    if not found_tables["cashflow"].empty:
-        st.write("...Μεταφράζεται ο Πίνακας 'CashFlow'...")
-        df = normalize_dataframe(found_tables["cashflow"], source_type="pdf")
-        if not df.empty:
-            final_dfs.append(df)
-            debug_log["Cash Flow (Normalized)"] = df
-        else:
-             st.warning("   > Η 'Μετάφραση' του CashFlow απέτυχε (π.χ. δεν βρήκε χρονιές).")
-
-    # 3. Τελική Ένωση (Merge)
-    if not final_dfs:
-        st.error("❌ Ο 'Υπέρ-Έξυπνος Διαχωριστής' απέτυχε. Δεν βρέθηκε ή δεν μεταφράστηκε κανένας χρήσιμος πίνακας.")
-        return pd.DataFrame(), debug_log
-
-    st.write("...Τελική ένωση (merge) των πινάκων...")
-    
-    final_golden_df = pd.DataFrame()
-    try:
-        final_golden_df = final_dfs[0]
-        if len(final_dfs) > 1:
-            for i in range(1, len(final_dfs)):
-                if 'Year' in final_golden_df.columns and 'Year' in final_dfs[i].columns:
-                    final_golden_df = pd.merge(final_golden_df, final_dfs[i], on="Year", how="outer")
+            if input_mode == "Yahoo" and ticker_in:
+                main_ticker = resolve_to_ticker(ticker_in)
+                analysis_group['main_ticker'] = main_ticker
+                
+                if competitors_in:
+                    analysis_group['title'] = f"{main_ticker} vs Peers"
                 else:
-                     st.warning(f"   > Αποτυχία 'Merge': Ένας πίνακας αγνοήθηκε (έλειπε το 'Year').")
+                    analysis_group['title'] = f"{main_ticker}"
+
+                # 1. Main
+                if main_ticker:
+                    data = get_company_df(main_ticker, "yahoo")
+                    info_df, _ = load_company_info(main_ticker)
+                    mcap = info_df['Κεφαλαιοποίηση'].iloc[0] if not info_df.empty else 0
+                    if data:
+                        df = normalize_dataframe(data[0]['table'], "yahoo")
+                        df['Market Cap'] = mcap
+                        forensics = calculate_financial_ratios(df)
+                        analysis_group['reports'][main_ticker] = {'data': forensics, 'df': df}
+
+                # 2. Competitors
+                if competitors_in:
+                    comp_list = [c.strip() for c in competitors_in.split(",")]
+                    for c_raw in comp_list:
+                        c_ticker = resolve_to_ticker(c_raw)
+                        if c_ticker and c_ticker != main_ticker:
+                            c_data = get_company_df(c_ticker, "yahoo")
+                            c_info, _ = load_company_info(c_ticker)
+                            c_mcap = c_info['Κεφαλαιοποίηση'].iloc[0] if not c_info.empty else 0
+                            
+                            if c_data:
+                                c_df = normalize_dataframe(c_data[0]['table'], "yahoo")
+                                c_df['Market Cap'] = c_mcap
+                                c_metrics = calculate_financial_ratios(c_df)
+                                analysis_group['reports'][c_ticker] = {'data': c_metrics, 'df': c_df}
+                                
+                                p3=c_metrics['Pillar_3']; p5=c_metrics['Pillar_5']; p2=c_metrics['Pillar_2']
+                                if p3['Net_Margin']!=0: sector_stats['Net_Margin'].append(p3['Net_Margin'])
+                                if p3['ROE']!=0: sector_stats['ROE'].append(p3['ROE'])
+                                if p5['PE_Ratio']>0: sector_stats['PE_Ratio'].append(p5['PE_Ratio'])
+                                if p2['DSO']>0: sector_stats['DSO'].append(p2['DSO'])
+
+                # 3. Benchmark
+                benchmark_data = {}
+                for k, v in sector_stats.items():
+                    if v: benchmark_data[k] = sum(v) / len(v)
+                analysis_group['benchmark'] = benchmark_data
+
+                # 4. Save
+                if analysis_group['reports']:
+                    st.session_state.history.append(analysis_group)
+                    st.session_state.current_group = analysis_group
+                    st.rerun()
+
+            elif input_mode == "File" and file_in:
+                temp_path = f"temp_{file_in.name}"
+                with open(temp_path, "wb") as f: f.write(file_in.getvalue())
+                src_type = "pdf" if "pdf" in file_in.name.lower() else "excel"
+                data = get_company_df(temp_path, src_type)
+                
+                if data:
+                    full_df = pd.DataFrame()
+                    for pkg in data:
+                        norm = normalize_dataframe(pkg['table'], src_type)
+                        if not norm.empty and 'Year' in norm.columns:
+                            full_df = pd.concat([full_df, norm])
                     
-    except Exception as e:
-        st.error(f"Αποτυχία 'Merge': {e}")
-        return pd.DataFrame(), debug_log
-
-    final_golden_df = final_golden_df.loc[:, ~final_golden_df.columns.duplicated()]
-    
-    if 'Year' in final_golden_df.columns:
-        final_golden_df['Year'] = pd.to_numeric(final_golden_df['Year'], errors='coerce').fillna(0).astype(int)
-
-    return final_golden_df, debug_log
-# === === === === === === === === === ===
-
-
-# === 1. Η Πλαϊνή Μπάρα (Sidebar) - Τα Εργαλεία Εισόδου ===
-st.sidebar.title("📊 Εργαλεία Ανάλυσης (v2.3)") # <--- Νέα έκδοση
-st.sidebar.markdown("Διάλεξε την πηγή και την εταιρεία σου.")
-
-def reset_analysis_state():
-    """v2.0: Κάνει reset τα πάντα όταν αλλάζει η πηγή."""
-    st.session_state.analysis_results = None
-    st.session_state.analysis_inputs = {}
-    st.session_state.company_info_loaded = False
-    st.session_state.company_info_data = {}
-
-source_options = ["Yahoo", "CSV", "Excel", "PDF"] 
-source_type = st.sidebar.selectbox(
-    "Επίλεξε Πηγή Δεδομένων:",
-    source_options,
-    key="source_type_select",
-    on_change=reset_analysis_state
-)
-
-# Αρχικοποίηση μεταβλητών
-raw_input: Optional[str] = None 
-uploaded_file: Optional[Any] = None
-selected_peers: List[str] = []
-
-# --- Λογική ανάλογα με την Πηγή ---
-if source_type in ["CSV", "Excel", "PDF"]: 
-    st.sidebar.warning("Η αυτόματη εύρεση ανταγωνιστών υποστηρίζεται μόνο με την πηγή 'Yahoo'.")
-    
-    file_types: List[str] = []
-    if source_type == "CSV": file_types = ["csv"]
-    elif source_type == "Excel": file_types = ["xlsx", "xls"]
-    elif source_type == "PDF": file_types = ["pdf"]
-
-    uploaded_file = st.sidebar.file_uploader(
-        f"Ανέβασε το αρχείο σου ({source_type})", 
-        type=file_types,
-        key="file_uploader",
-        on_change=reset_analysis_state
-    )
-    if uploaded_file:
-        st.session_state.company_info_loaded = True
-        st.session_state.company_info_data = {
-            "ticker": "File",
-            "source_name": uploaded_file.name,
-            "industry": "General",
-            "country": "N/A (from file)",
-            "info_df": pd.DataFrame([{"Όνομα": uploaded_file.name, "Κλάδος": "General", "Χώρα": "N/A (from file)", "Σημείωση": "Ανάλυση από τοπικό αρχείο"}]),
-            "peer_list": [] 
-        }
-
-
-elif source_type == "Yahoo":
-    raw_input = st.sidebar.text_input(
-        "Ticker ή Όνομα Κύριας Εταιρείας:", 
-        "MSFT", 
-        key="ticker_input",
-        on_change=reset_analysis_state
-    )
-    
-    if st.sidebar.button("Εύρεση Πληροφοριών & Ανταγωνιστών", key="find_peers"):
-        if raw_input:
-            with st.spinner(f"Αναζήτηση για '{raw_input}'..."):
-                ticker = resolve_to_ticker(raw_input, source_type="yahoo")
-            if ticker:
-                st.success(f"Βρέθηκε το Ticker: **{ticker}**")
-                with st.spinner(f"Λήψη Πληροφοριών & Ανταγωνιστών για {ticker}..."):
-                    try:
-                        info_df, industry = load_company_info(ticker)
-                        country = info_df['Χώρα'].iloc[0]
+                    if not full_df.empty:
+                        full_df['Year'] = pd.to_numeric(full_df['Year'], errors='coerce')
+                        full_df = full_df.groupby('Year', as_index=False).first()
+                        forensics = calculate_financial_ratios(full_df)
                         
-                        stock_finviz = finvizfinance(ticker)
-                        peer_list = stock_finviz.ticker_peer()
+                        analysis_group['title'] = file_in.name
+                        analysis_group['main_ticker'] = file_in.name
+                        analysis_group['reports'][file_in.name] = {'data': forensics, 'df': full_df}
                         
-                        st.session_state.company_info_loaded = True
-                        st.session_state.company_info_data = {
-                            "ticker": ticker,
-                            "source_name": info_df['Όνομα'].iloc[0] or ticker,
-                            "info_df": info_df,
-                            "industry": industry,
-                            "country": country,
-                            "peer_list": peer_list
-                        }
-                        
-                    except Exception as e:
-                        st.error(f"Αποτυχία λήψης ανταγωνιστών (Ίσως το Finviz απέκλεισε την IP): {e}")
-                        info_df, industry = load_company_info(ticker)
-                        country = info_df['Χώρα'].iloc[0]
-                        st.session_state.company_info_loaded = True
-                        st.session_state.company_info_data = {
-                            "ticker": ticker,
-                            "source_name": info_df['Όνομα'].iloc[0] or ticker,
-                            "info_df": info_df,
-                            "industry": industry,
-                            "country": country,
-                            "peer_list": [] # Άδεια λίστα
-                        }
-            else:
-                st.error(f"Δεν βρέθηκε έγκυρο Ticker για το '{raw_input}'.")
+                        st.session_state.history.append(analysis_group)
+                        st.session_state.current_group = analysis_group
+                        st.rerun()
+                if os.path.exists(temp_path): os.remove(temp_path)
+
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+# === REPORT DISPLAY ===
+if st.session_state.current_group:
+    group = st.session_state.current_group
+    reports_dict = group['reports']
+    bench = group['benchmark']
+    main_ticker = group['main_ticker']
+
+    st.divider()
+    
+    company_options = list(reports_dict.keys())
+    if main_ticker in company_options:
+        company_options.remove(main_ticker)
+        company_options.insert(0, main_ticker)
+    
+    st.markdown("<h5 style='text-align:center; color:#7f8c8d;'>Select Company View:</h5>", unsafe_allow_html=True)
+    selected_company = st.radio("Select View", company_options, horizontal=True, label_visibility="collapsed")
+    
+    active_data = reports_dict[selected_company]
+    forensics = active_data['data']
+    df_raw = active_data['df']
+
+    col_h1, col_h2 = st.columns([3, 1])
+    with col_h1:
+        st.markdown(f"### 📑 Analysis: **{selected_company}**")
+    with col_h2:
+        pdf_bytes = create_pdf_bytes(selected_company, forensics)
+        st.download_button("📥 Download PDF", pdf_bytes, f"ValuePy_{selected_company}.pdf", "application/pdf")
+
+    p1 = forensics.get('Pillar_1', {})
+    p2 = forensics.get('Pillar_2', {})
+    p3 = forensics.get('Pillar_3', {})
+    p5 = forensics.get('Pillar_5', {})
+
+    def card(lbl, val, delta, clr):
+        st.markdown(f"""<div class="metric-card"><div class="metric-label">{lbl}</div><div class="metric-value" style="color: {clr};">{val}</div><div class="benchmark-val">{delta}</div></div>""", unsafe_allow_html=True)
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: 
+        clr = "#e74c3c" if p1.get('Is_Paper_Profits') else "#27ae60"
+        card("QUALITY", p1.get('Flag'), f"Gap: {p1.get('Gap',0)/1e6:.1f}M", clr)
+    with c2:
+        b_roe = f"vs Peer Avg: {bench.get('ROE', 0):.1f}%" if bench else "-"
+        card("ROE", f"{p3.get('ROE')}%", b_roe, "black")
+    with c3:
+        b_dso = f"vs Peer Avg: {bench.get('DSO', 0):.0f}d" if bench else "-"
+        card("DSO", f"{p2.get('DSO'):.0f}d", b_dso, "black")
+    with c4:
+        b_pe = f"vs Peer Avg: {bench.get('PE_Ratio', 0):.1f}x" if bench else "-"
+        clr = "#27ae60" if p5.get('EVA', 0) > 0 else "#e74c3c"
+        card("VALUATION", p5.get('Value_Creation'), b_pe, clr)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # === Η ΔΙΟΡΘΩΣΗ: 3 TABS ===
+    t1, t2, t3 = st.tabs(["📊 Charts", "⚖️ Valuation", "📄 Data"])
+    
+    with t1:
+        fig = go.Figure(go.Waterfall(
+            measure = ["relative", "total", "relative"],
+            x = ["Net Income", "CFO", "Gap"],
+            y = [p1.get('Net_Income',0), 0, -p1.get('Gap',0)],
+            text = [f"{p1.get('Net_Income',0)/1e6:.1f}M", f"{p1.get('CFO',0)/1e6:.1f}M", ""],
+            connector = {"line":{"color":"rgb(63, 63, 63)"}},
+        ))
+        fig.update_layout(title="Earnings vs Cash Flow Reality", height=300)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # === ΕΠΑΝΑΦΟΡΑ VALUATION LAB ===
+    with t2:
+        st.subheader(f"🧪 Valuation Lab: {selected_company}")
+        st.markdown("Adjust the **Cost of Capital (WACC)** to see if the company creates economic value.")
+        
+        # Slider με μοναδικό κλειδί για να μην μπερδεύεται
+        wacc = st.slider("Target WACC", 0.04, 0.20, 0.10, 0.005, format="%.1f%%", key=f"wacc_{selected_company}")
+        
+        invested_cap = p5.get('Invested_Capital', 0)
+        nopat = p5.get('NOPAT', 0)
+        eva_calc = nopat - (invested_cap * wacc)
+        
+        c_v1, c_v2, c_v3 = st.columns(3)
+        c_v1.metric("Invested Capital", f"€{invested_cap/1e6:,.1f}M")
+        c_v2.metric("NOPAT (Operating Profit)", f"€{nopat/1e6:,.1f}M")
+        c_v3.metric("EVA (Economic Value Added)", f"€{eva_calc/1e6:,.1f}M", delta_color="normal" if eva_calc>0 else "inverse")
+        
+        if eva_calc > 0:
+            st.success(f"With WACC {wacc*100:.1f}%, the company is **Creating Value** for shareholders.")
         else:
-            st.warning("Παρακαλώ εισάγετε ένα Ticker ή Όνομα.")
+            st.error(f"With WACC {wacc*100:.1f}%, the company is **Destroying Value**.")
 
-
-# === v2.0: ΝΕΑ ΛΟΓΙΚΗ (Εμφανίζεται *μετά* την εύρεση) ===
-if st.session_state.company_info_loaded:
-    
-    peers_info = st.session_state.company_info_data
-    
-    st.sidebar.success(f"Εταιρεία: {peers_info['ticker']} ({peers_info['industry']})")
-    st.sidebar.caption(f"Χώρα: {peers_info.get('country', 'N/A')}")
-    
-    if peers_info.get("peer_list"):
-        st.sidebar.subheader("Επιλογή Ανταγωνιστών")
-        selected_peers = st.sidebar.multiselect(
-            "Επίλεξε 0 ή περισσότερους για σύγκριση:",
-            options=peers_info["peer_list"],
-            key="peers_multiselect"
-        )
-    
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Επιλογή Χρονικού Διαστήματος")
-    current_year = datetime.datetime.now().year
-    
-    start_year = st.sidebar.number_input("Από (Έτος):", 2018, current_year - 1, value=current_year-5, key="start_year")
-    end_year = st.sidebar.number_input("Έως (Έτος):", 2019, current_year + 5, value=current_year, key="end_year")
-
-    if start_year > end_year:
-        st.sidebar.error("Το 'Από' δεν μπορεί να είναι μετά το 'Έως'.")
-        st.stop()
-
-    if st.sidebar.button("🚀 Έναρξη Ανάλυσης", key="analyze_main"):
-        st.session_state.analysis_results = None 
-        st.session_state.analysis_inputs = {
-            "source_type": source_type,
-            "source_name": peers_info["source_name"],
-            "main_ticker": peers_info["ticker"],
-            "info_df_main": peers_info["info_df"],
-            "industry_main": peers_info["industry"],
-            "selected_peers": selected_peers, 
-            "uploaded_file_bytes": uploaded_file.getvalue() if uploaded_file else None,
-            "uploaded_file_name": uploaded_file.name if uploaded_file else None,
-            "start_year": start_year,
-            "end_year": end_year
-        }
-        analyze_button_pressed = True 
-    else:
-        analyze_button_pressed = False
+    with t3:
+        st.dataframe(df_raw, use_container_width=True)
 
 else:
-    analyze_button_pressed = False
-# === === === === === === === === === ===
-
-
-# === 2. Κεντρική Σελίδα - Τα Αποτελέσματα ===
-st.title("📊 Financial Analysis Dashboard (v2.3)") # <--- Νέα έκδοση
-
-if st.session_state.analysis_inputs:
-    
-    inputs = st.session_state.analysis_inputs
-    source_type = inputs["source_type"]
-    source_name = inputs["source_name"]
-    start_year = inputs["start_year"]
-    end_year = inputs["end_year"]
-    main_ticker = inputs["main_ticker"] 
-
-    st.markdown(f"Ανάλυση για: **{source_name}** (Πηγή: {source_type})")
-
-    if st.session_state.analysis_results and not analyze_button_pressed:
-        st.info("Φόρτωση αποτελεσμάτων από τη μνήμη...")
-        results = st.session_state.analysis_results
-    
-    else:
-        # --- ΑΝ ΔΕΝ ΕΙΝΑΙ ΣΤΗ ΜΝΗΜΗ: ΚΑΝΕ ΤΗΝ ΑΝΑΛΥΣΗ (ΑΡΓΟ) ---
-        
-        all_info_dfs = {}
-        all_company_dfs_normalized = {}
-        all_debug_tables = {}
-        
-        # NEW: Ψευδώνυμο για τον μέσο όρο
-        INDUSTRY_AVG_TICKER = "INDUSTRY_AVG" 
-        industry_ratios_to_save = {}
-        sector_main = "General" # Αρχικοποίηση
-        
-        # === [ΝΕΟ ΒΗΜΑ Γ.1] Λήψη & Υπολογισμός Μέσου Όρου Κλάδου ===
-        if source_type == "Yahoo":
-            sector_main = inputs["info_df_main"]['Κλάδος'].iloc[0] 
-            
-            with st.spinner(f"Λήψη Tickers για τον κλάδο '{sector_main}'..."):
-                # Χρησιμοποιούμε τη νέα συνάρτηση για να βρούμε ΟΛΟΥΣ τους πιθανούς tickers (έως 50)
-                all_industry_tickers = get_industry_tickers(industry_name=sector_main, sector_name=sector_main)
-            
-            if all_industry_tickers:
-                st.info(f"Βρέθηκαν {len(all_industry_tickers)} εταιρείες στον κλάδο. Υπολογισμός Μέσου Όρου...")
-                
-                all_industry_ratios = [] 
-                
-                # --- Κύκλος Ανάλυσης Κλάδου ---
-                for ind_ticker in all_industry_tickers:
-                    try:
-                        # Λήψη δεδομένων
-                        raw_data_list_ind = get_company_df(ind_ticker, source_type="yahoo", period="max")
-                        if not raw_data_list_ind: continue
-                        raw_table_ind = raw_data_list_ind[0]["table"]
-                        company_df_ind = normalize_dataframe(raw_table_ind, source_type="yahoo")
-                        
-                        # Φιλτράρισμα ετών 
-                        if 'Year' in company_df_ind.columns:
-                            company_df_ind['Year'] = pd.to_numeric(company_df_ind['Year'], errors='coerce').fillna(0).astype(int)
-                            company_df_ind = company_df_ind[
-                                (company_df_ind['Year'] >= start_year) & 
-                                (company_df_ind['Year'] <= end_year)
-                            ].copy()
-                        
-                        # Υπολογισμός Δεικτών
-                        if not company_df_ind.empty:
-                            # Εδώ καλούμε την calculate_financial_ratios από το analyzer
-                            ind_result = calculate_financial_ratios(company_df_ind, sector=sector_main)
-                            if ind_result.get("categories"):
-                                all_industry_ratios.append(ind_result["categories"])
-                        
-                    except Exception:
-                        # Παραλείπουμε τα σφάλματα από μεμονωμένες εταιρείες
-                        continue 
-                
-                # --- Υπολογισμός Μέσων Όρων ---
-                if all_industry_ratios:
-                    st.info(f"Επιτυχής ανάλυση {len(all_industry_ratios)} εταιρειών του κλάδου για υπολογισμό μέσου όρου.")
-                    
-                    # Υπολογίζουμε τον μέσο όρο (mean) για κάθε συνδυασμό Έτους/Δείκτη
-                    sample_categories = all_industry_ratios[0].keys()
-                    
-                    for category in sample_categories:
-                        all_dfs_for_category = []
-                        for ratios_dict in all_industry_ratios:
-                            if category in ratios_dict:
-                                # Flatten DataFrame (Year, Ratio, Value)
-                                df = ratios_dict[category].set_index('Year').stack().reset_index()
-                                df.columns = ['Year', 'Ratio', 'Value']
-                                all_dfs_for_category.append(df)
-                        
-                        if all_dfs_for_category:
-                            merged_category_df = pd.concat(all_dfs_for_category)
-                            
-                            # Υπολογίζουμε τον μέσο όρο (mean) για κάθε συνδυασμό Έτους/Δείκτη
-                            avg_df = merged_category_df.groupby(['Year', 'Ratio'])['Value'].mean().reset_index()
-                            
-                            # Ξαναγυρίζουμε στον αρχικό πίνακα (Year, Ratio1, Ratio2, ...)
-                            avg_df_pivot = avg_df.pivot(index='Year', columns='Ratio', values='Value').reset_index()
-                            
-                            industry_ratios_to_save[category] = avg_df_pivot
-                    
-                    st.success(f"✅ Υπολογίστηκε ο Μέσος Όρος Κλάδου.")
-        
-        # === ΒΗΜΑ Α: ΦΟΡΤΩΣΗ ΚΥΡΙΑΣ ΕΤΑΙΡΕΙΑΣ ===
-        all_info_dfs[main_ticker] = inputs["info_df_main"]
-        industry_main = inputs["industry_main"]
-        
-        if source_type == "Yahoo":
-            with st.spinner(f"Λήψη δεδομένων για {main_ticker}..."):
-                raw_data_list = get_company_df(main_ticker, source_type=source_type.lower(), period="max")
-                if not raw_data_list:
-                    st.error(f"Δεν βρέθηκαν δεδομένα από το Yahoo Finance για τον {main_ticker}.")
-                    st.session_state.analysis_inputs = {}
-                    st.stop()
-                
-                st.info(f"...Μεταφράζεται ο Πίνακας 'Yahoo' ({main_ticker})...")
-                raw_table_main = raw_data_list[0]["table"]
-                company_df_main = normalize_dataframe(raw_table_main, source_type="yahoo")
-                
-                all_company_dfs_normalized[main_ticker] = company_df_main
-                all_debug_tables[main_ticker] = {"Yahoo Finance Data (Raw)": raw_table_main, "Yahoo Finance Data (Normalized)": company_df_main}
-
-        elif source_type in ["CSV", "Excel", "PDF"] and inputs["uploaded_file_bytes"] is not None:
-            with st.spinner(f"Επεξεργασία αρχείου '{source_name}'..."):
-                
-                temp_dir = "temp"
-                if not os.path.exists(temp_dir): os.makedirs(temp_dir)
-                
-                try:
-                    normalized_name = unicodedata.normalize('NFKD', inputs["uploaded_file_name"]).encode('ascii', 'ignore').decode('ascii')
-                    if not normalized_name or normalized_name.isspace(): normalized_name = "uploaded_file.tmp"
-                except Exception:
-                    normalized_name = "uploaded_file.tmp"
-                    
-                temp_file_path = os.path.join(temp_dir, normalized_name)
-                
-                with open(temp_file_path, "wb") as f: f.write(inputs["uploaded_file_bytes"])
-                
-                file_ext = source_type.lower()
-                raw_data_list = get_company_df(temp_file_path, source_type=file_ext)
-                
-                if not raw_data_list:
-                    st.error(f"Δεν βρέθηκαν δεδομένα στο {file_ext} αρχείο.")
-                    st.session_state.analysis_inputs = {}
-                    st.stop()
-                
-                debug_tables_main = {"Source Type": file_ext}
-                
-                if file_ext == "pdf":
-                    company_df_main, debug_pdf_tables_update = _find_and_merge_pdf_tables(raw_data_list)
-                    debug_tables_main.update(debug_pdf_tables_update)
-                else:
-                    st.info(f"...Μεταφράζεται ο Πίνακας '{file_ext}'...")
-                    raw_table_for_debug = raw_data_list[0]["table"]
-                    company_df_main = normalize_dataframe(raw_table_for_debug, source_type=file_ext)
-                    debug_tables_main.update({"File Data (Raw)": raw_table_for_debug, f"File Data ({file_ext}) (Normalized)": company_df_main})
-
-                all_company_dfs_normalized[main_ticker] = company_df_main
-                all_debug_tables[main_ticker] = debug_tables_main
-
-        # === ΒΗΜΑ Β: ΦΟΡΤΩΣΗ ΑΝΤΑΓΩΝΙΣΤΩΝ (v2.0) ===
-        selected_peers = inputs["selected_peers"]
-        for peer_ticker in selected_peers:
-            with st.spinner(f"Λήψη δεδομένων για ανταγωνιστή: {peer_ticker}..."):
-                try:
-                    info_df_peer, _ = load_company_info(peer_ticker)
-                    all_info_dfs[peer_ticker] = info_df_peer
-                    
-                    raw_data_list_peer = get_company_df(peer_ticker, source_type="yahoo", period="max")
-                    if not raw_data_list_peer:
-                        st.warning(f"Δεν βρέθηκαν δεδομένα για τον {peer_ticker}. Παράλειψη.")
-                        continue
-                    
-                    raw_table_peer = raw_data_list_peer[0]["table"]
-                    company_df_peer = normalize_dataframe(raw_table_peer, source_type="yahoo")
-                    
-                    all_company_dfs_normalized[peer_ticker] = company_df_peer
-                    all_debug_tables[peer_ticker] = {"Yahoo Finance Data (Raw)": raw_table_peer, "Yahoo Finance Data (Normalized)": company_df_peer}
-                    
-                except Exception as e:
-                    st.error(f"Αποτυχία λήψης δεδομένων για {peer_ticker}: {e}")
-        
-        # === ΒΗΜΑ Γ.2: ΦΙΛΤΡΑΡΙΣΜΑ & ΥΠΟΛΟΓΙΣΜΟΣ ΚΥΡΙΑΣ ΕΤΑΙΡΕΙΑΣ & ΑΝΤΑΓΩΝΙΣΤΩΝ ===
-        
-        # Αρχικοποίηση λίστας δεικτών
-        all_ratios_categories = {}
-        
-        # ⚠️ ΠΡΟΣΘΕΤΟΥΜΕ ΠΡΩΤΑ ΤΟΝ ΜΕΣΟ ΟΡΟ ΚΛΑΔΟΥ
-        if industry_ratios_to_save:
-            all_ratios_categories[INDUSTRY_AVG_TICKER] = industry_ratios_to_save
-            # Πρέπει να φτιάξουμε ένα Info DataFrame για τον κλάδο, ώστε να το αναγνωρίζει ο display
-            all_info_dfs[INDUSTRY_AVG_TICKER] = pd.DataFrame([{"Όνομα": f"Μέσος Όρος Κλάδου ({sector_main})", "Κλάδος": sector_main, "Χώρα": "Industry", "Σημείωση": "Αυτόματος Υπολογισμός"}])
-        
-        all_company_dfs_analyzed = {}
-        all_tickers_to_process = [main_ticker] + selected_peers
-        
-        # --- Κύκλος Ανάλυσης (Main & Peers) ---
-        for ticker in all_tickers_to_process:
-            if ticker not in all_company_dfs_normalized or all_company_dfs_normalized[ticker].empty:
-                st.warning(f"Παράλειψη ανάλυσης για {ticker}: Δεν βρέθηκαν κανονικοποιημένα δεδομένα.")
-                continue
-
-            company_df = all_company_dfs_normalized[ticker]
-            
-            if 'Year' in company_df.columns:
-                try:
-                    company_df['Year'] = pd.to_numeric(company_df['Year'], errors='coerce').fillna(0).astype(int)
-                    original_rows = len(company_df)
-                    company_df_filtered = company_df[
-                        (company_df['Year'] >= start_year) & 
-                        (company_df['Year'] <= end_year)
-                    ].copy()
-                    
-                    st.info(f"Φίλτρο Ετών ({ticker}): {start_year} - {end_year}. (Βρέθηκαν {len(company_df_filtered)} από {original_rows} εγγραφές).")
-
-                    if company_df_filtered.empty:
-                        st.error(f"Δεν βρέθηκαν δεδομένα για {ticker} στο συγκεκριμένο χρονικό διάστημα.")
-                        continue
-                    
-                    company_df_to_analyze = company_df_filtered
-                        
-                except Exception as e:
-                    st.warning(f"Αποτυχία φιλτραρίσματος ετών ({ticker}): {e}")
-                    company_df_to_analyze = company_df
-            else:
-                st.warning(f"Δεν βρέθηκε στήλη 'Year' για φιλτράρισμα ({ticker}).")
-                company_df_to_analyze = company_df
-            
-            # --- Υπολογισμός Δεικτών ---
-            with st.spinner(f"Υπολογισμός δεικτών για {ticker}..."):
-                current_industry = all_info_dfs[ticker]['Κλάδος'].iloc[0] if ticker in all_info_dfs else "General"
-                result = calculate_financial_ratios(company_df_to_analyze, sector=current_industry)
-                
-                # Αποθήκευση αποτελεσμάτων
-                all_ratios_categories[ticker] = result.get("categories", {})
-                all_company_dfs_analyzed[ticker] = company_df_to_analyze
-
-        # === v1.22: ΑΠΟΘΗΚΕΥΣΗ ΟΛΩΝ ΤΩΝ ΑΠΟΤΕΛΕΣΜΑΤΩΝ ===
-        st.session_state.analysis_results = {
-            "all_info_dfs": all_info_dfs,
-            "all_company_dfs_analyzed": all_company_dfs_analyzed,
-            "all_ratios_categories": all_ratios_categories,
-            "main_ticker": main_ticker,
-            "selected_peers": selected_peers,
-            "all_debug_tables": all_debug_tables
-        }
-        
-        results = st.session_state.analysis_results
-    
-    # === === === === === === === === === === ===
-    # === 3. Παρουσίαση Αποτελεσμάτων (ΤΡΕΧΕΙ ΠΑΝΤΑ) ===
-    # === === === === === === === === === === ===
-    
-    all_info_dfs = results["all_info_dfs"]
-    all_company_dfs_analyzed = results["all_company_dfs_analyzed"]
-    all_ratios_categories = results["all_ratios_categories"]
-    main_ticker = results["main_ticker"]
-    selected_peers = results["selected_peers"]
-    all_debug_tables = results["all_debug_tables"]
-    
-    # v2.3: Αρχικοποίηση λίστας tickers για εμφάνιση
-    all_tickers_to_display = [main_ticker] + selected_peers
-    
-    # v2.3: Προσθήκη του INDUSTRY_AVG στη λίστα tickers αν υπάρχει
-    INDUSTRY_AVG_TICKER = "INDUSTRY_AVG"
-    industry_avg_available = INDUSTRY_AVG_TICKER in all_info_dfs
-    
-    if industry_avg_available:
-        all_tickers_to_display.append(INDUSTRY_AVG_TICKER)
-    
-    # Εμφάνιση Επισκοπήσεων (v2.3)
-    for ticker in all_tickers_to_display:
-        if ticker in all_info_dfs:
-            st.header(f"Επισκόπηση: {all_info_dfs[ticker]['Όνομα'].iloc[0]}")
-            st.dataframe(all_info_dfs[ticker], width=1200) 
-
-    # --- Λήψη PDF (Μόνο για την Κύρια Εταιρεία) ---
-    with st.spinner("Δημιουργία αναφοράς PDF..."):
-        pdf_data_raw = create_pdf_report(
-            all_info_dfs[main_ticker], 
-            all_ratios_categories.get(main_ticker, {}), 
-            all_company_dfs_analyzed.get(main_ticker, pd.DataFrame())
-        )
-        pdf_bytes_fixed = bytes(pdf_data_raw)
-        
-        st.download_button(
-            label="📥 Λήψη Αναφοράς σε PDF (Κύρια Εταιρεία)",
-            data=pdf_bytes_fixed, 
-            file_name=f"Report_{source_name}_{start_year}-{end_year}.pdf",
-            mime="application/pdf",
-            key="download_pdf_main"
-        )
-
-    # --- Συγκριτική Ανάλυση ---
-    st.header(f"Συγκριτική Ανάλυση Δεικτών (Για {start_year} - {end_year})")
-    
-    if not all_ratios_categories.get(main_ticker):
-        st.warning("Δεν υπολογίστηκαν δείκτες για την Κύρια Εταιρεία.")
-        
-    else:
-        tab_names = list(all_ratios_categories[main_ticker].keys())
-        tabs = st.tabs(tab_names)
-        
-        for i, tab_name in enumerate(tab_names):
-            with tabs[i]:
-                st.subheader(f"Σύγκριση: {tab_name}")
-                
-                # v2.3: Λογική για πολλές εταιρείες + INDUSTRY_AVG
-                all_tickers_in_tab = [main_ticker] + selected_peers
-                if industry_avg_available:
-                    all_tickers_in_tab.append(INDUSTRY_AVG_TICKER)
-                
-                melted_dfs = []
-                valid_ratios_in_tab = set() 
-                
-                if main_ticker in all_ratios_categories and tab_name in all_ratios_categories[main_ticker]:
-                     main_df = all_ratios_categories[main_ticker][tab_name]
-                     if not main_df.empty:
-                          valid_ratios_in_tab.update(main_df.columns.drop('Year'))
-                
-                for ticker in all_tickers_in_tab:
-                    if ticker in all_ratios_categories and tab_name in all_ratios_categories[ticker]:
-                        df = all_ratios_categories[ticker][tab_name]
-                        if not df.empty and 'Year' in df.columns:
-                            melted_dfs.append(df.melt(id_vars=['Year'], var_name='Ratio', value_name=ticker))
-                
-                if not melted_dfs:
-                    st.warning(f"Δεν βρέθηκαν δεδομένα για {tab_name}.")
-                    continue
-
-                # Ενώνουμε όλους τους πίνακες
-                try:
-                    df_merged = melted_dfs[0]
-                    if len(melted_dfs) > 1:
-                        for j in range(1, len(melted_dfs)):
-                            df_merged = pd.merge(df_merged, melted_dfs[j], on=['Year', 'Ratio'], how='outer')
-                    
-                    df_merged = df_merged.sort_values(by=['Ratio', 'Year'], ascending=[True, False])
-                    st.dataframe(df_merged.set_index('Ratio'), width=1200)
-                except Exception as e:
-                    st.error(f"Αποτυχία δημιουργίας συγκριτικού πίνακα: {e}")
-                
-                # Δημιουργία Γραφημάτων (ένα για κάθε δείκτη)
-                for ratio in valid_ratios_in_tab:
-                    st.subheader(f"Εξέλιξη: {ratio}")
-                    
-                    chart_data_list = []
-                    for ticker in all_tickers_in_tab:
-                        if ticker in all_ratios_categories and tab_name in all_ratios_categories[ticker]:
-                            df = all_ratios_categories[ticker][tab_name]
-                            if ratio in df.columns:
-                                chart_data_list.append(df[['Year', ratio]].rename(columns={ratio: ticker}))
-                    
-                    if not chart_data_list:
-                        st.info(f"Δεν βρέθηκαν δεδομένα για το γράφημα του {ratio}.")
-                        continue
-                        
-                    chart_df = chart_data_list[0]
-                    if len(chart_data_list) > 1:
-                          for j in range(1, len(chart_data_list)):
-                                chart_df = pd.merge(chart_df, chart_data_list[j], on='Year', how='outer')
-                    
-                    st.line_chart(chart_df.set_index('Year'))
-
-    st.success("✅ Η ανάλυση ολοκληρώθηκε!")
-    
-    with st.expander("Δες τον 'Χρυσό' Πίνακα (Κύρια Εταιρεία - ΦΙΛΤΡΑΡΙΣΜΕΝΑ)"):
-        st.dataframe(all_company_dfs_analyzed.get(main_ticker, pd.DataFrame()))
-        
-    for peer_ticker in selected_peers:
-        with st.expander(f"Δες τον 'Χρυσό' Πίνακα ({peer_ticker} - ΦΙΛΤΡΑΡΙΣΜΕΝΑ)"):
-            st.dataframe(all_company_dfs_analyzed.get(peer_ticker, pd.DataFrame()))
-    
-    # v2.3: Εμφάνιση Debug για τον Μέσο Όρο
-    if industry_avg_available:
-        with st.expander("Δες τους 'Χρυσούς' Πίνακες (Μέσος Όρος Κλάδου)"):
-            avg_ratios = all_ratios_categories.get(INDUSTRY_AVG_TICKER, {})
-            if not avg_ratios:
-                st.info("Δεν υπολογίστηκαν δείκτες Μέσου Όρου.")
-            else:
-                for category, df in avg_ratios.items():
-                    st.caption(f"Πίνακας: {category} (Μ.Ο.)")
-                    st.dataframe(df)
-
-    with st.expander("Δες την Αναφορά Εντοπισμού (Debug Report - Κύρια Εταιρεία)"):
-        if main_ticker in all_debug_tables:
-            for title, df in all_debug_tables[main_ticker].items():
-                st.caption(f"Πίνακας: {title}")
-                st.dataframe(df)
-        else:
-            st.info("Δεν φορτώθηκαν δεδομένα.")
-            
-    for peer_ticker in selected_peers:
-         with st.expander(f"Δες την Αναφορά Εντοπισμού (Debug Report - {peer_ticker})"):
-            if peer_ticker in all_debug_tables:
-                for title, df in all_debug_tables[peer_ticker].items():
-                    st.caption(f"Πίνακας: {title}")
-                    st.dataframe(df)
-
-else:
-    st.info("Επίλεξε πηγή και εταιρεία από την πλαϊνή μπάρα για να ξεκινήσεις.")
+    st.info("Start by searching for a company or uploading a file.")

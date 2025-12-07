@@ -1,125 +1,122 @@
-# modules/analyzer.py (v3.7 - Διόρθωση PyArrow/Date Error)
+# modules/analyzer.py (v4.5 - FINAL CLEAN VERSION)
 import pandas as pd
 import numpy as np
 
-def calculate_financial_ratios(df, sector="General"):
-    """
-    Υπολογίζει ένα σετ χρηματοοικονομικών δεικτών από ένα DataFrame.
-    """
-    print(f"🏢 Analyzer: Υπολογισμός για κλάδο: {sector}")
-    
-    # Αρχικοποίηση λίστας για τα αποτελέσματα
-    all_ratios = []
+def calculate_financial_ratios(df: pd.DataFrame, sector: str = "General") -> dict:
+    if df.empty:
+        return {}
 
-    # v3.7 FIX: ΒΕΒΑΙΩΝΟΜΑΣΤΕ ότι η στήλη 'Date' (Timestamp) ΔΕΝ θα μπει στους υπολογισμούς
-    if 'Date' in df.columns:
-        df = df.drop(columns=['Date'])
-        
-    # Σιγουρευόμαστε ότι τα 'Year' είναι index για εύκολη πρόσβαση
-    if 'Year' in df.columns:
-        df = df.set_index('Year')
-        
-    df = df.sort_index(ascending=False) # Ταξινόμηση (νεότερο πρώτα)
+    # Ταξινόμηση
+    df = df.sort_values(by='Year', ascending=False).reset_index(drop=True)
+    latest = df.iloc[0]
+    try:
+        prev = df.iloc[1]
+    except IndexError:
+        prev = latest 
 
-    for year in df.index:
+    def safe_div(a, b):
         try:
-            row = df.loc[year]
-            
-            # --- Βασικά Δεδομένα ---
-            revenue = pd.to_numeric(row.get('Revenue'), errors='coerce')
-            cogs = pd.to_numeric(row.get('CostOfGoodsSold'), errors='coerce')
-            op_income = pd.to_numeric(row.get('OperatingIncome'), errors='coerce')
-            net_income = pd.to_numeric(row.get('NetIncome'), errors='coerce')
-            
-            current_assets = pd.to_numeric(row.get('CurrentAssets'), errors='coerce')
-            current_liab = pd.to_numeric(row.get('CurrentLiabilities'), errors='coerce')
-            total_assets = pd.to_numeric(row.get('TotalAssets'), errors='coerce')
-            total_liab = pd.to_numeric(row.get('TotalLiabilities'), errors='coerce')
-            total_equity = pd.to_numeric(row.get('TotalEquity'), errors='coerce')
-            
-            cash = pd.to_numeric(row.get('Cash'), errors='coerce')
-            inventory = pd.to_numeric(row.get('Inventory'), errors='coerce')
-            op_cash_flow = pd.to_numeric(row.get('OperatingCashFlow'), errors='coerce')
-            
-            # Υπολογισμός Gross Profit
-            if pd.isna(cogs):
-                # Αν δεν υπάρχει COGS, προσπαθούμε να το βρούμε από το GrossProfit (αν υπάρχει)
-                gross_profit = pd.to_numeric(row.get('GrossProfit'), errors='coerce')
-                if not pd.isna(gross_profit):
-                    cogs = revenue - gross_profit
-            else:
-                gross_profit = revenue - cogs
+            val_a = float(a)
+            val_b = float(b)
+            return val_a / val_b if val_b != 0 else 0
+        except (ValueError, TypeError):
+            return 0
 
-            # --- 1. Δείκτες Ρευστότητας (Liquidity) ---
-            current_ratio = current_assets / current_liab
-            quick_ratio = (current_assets - inventory) / current_liab if not pd.isna(inventory) else np.nan
-            cash_ratio = cash / current_liab if not pd.isna(cash) else np.nan
+    results = {}
 
-            # --- 2. Δείκτες Μόχλευσης (Leverage) ---
-            debt_to_equity = total_liab / total_equity
-            debt_to_assets = total_liab / total_assets
+    # === PILLAR 1: QUALITY ===
+    net_income = pd.to_numeric(latest.get('NetIncome', 0), errors='coerce')
+    cfo = pd.to_numeric(latest.get('OperatingCashFlow', 0), errors='coerce')
+    if pd.isna(net_income): net_income = 0
+    if pd.isna(cfo): cfo = 0
 
-            # --- 3. Δείκτες Αποδοτικότητας (Profitability) ---
-            gross_profit_margin = gross_profit / revenue
-            operating_margin = op_income / revenue
-            net_profit_margin = net_income / revenue
-
-            # --- 4. Δείκτες Απόδοσης (Efficiency/Returns) ---
-            return_on_assets_roa = net_income / total_assets
-            return_on_equity_roe = net_income / total_equity
-            asset_turnover = revenue / total_assets
-
-            ratios = {
-                "Year": int(year),
-                "Sector": sector,
-                
-                # Liquidity
-                "Current Ratio": current_ratio,
-                "Quick Ratio": quick_ratio,
-                "Cash Ratio": cash_ratio,
-                
-                # Leverage
-                "Debt to Equity": debt_to_equity,
-                "Debt to Assets": debt_to_assets,
-                
-                # Profitability
-                "Gross Profit Margin": gross_profit_margin,
-                "Operating Margin": operating_margin,
-                "Net Profit Margin": net_profit_margin,
-                
-                # Efficiency/Returns
-                "Return on Assets (ROA)": return_on_assets_roa,
-                "Return on Equity (ROE)": return_on_equity_roe,
-                "Asset Turnover": asset_turnover,
-            }
-            all_ratios.append(ratios)
-
-        except Exception as e:
-            print(f"⚠️ Analyzer Warning: Αποτυχία υπολογισμού δεικτών για το έτος {year}: {e}")
-            continue
-
-    if not all_ratios:
-        print("❌ Analyzer Error: Δεν μπόρεσε να υπολογιστεί κανένας δείκτης.")
-        return {"ratios": pd.DataFrame(), "categories": {}}
-
-    # --- Δημιουργία Πινάκων ---
-    ratios_df = pd.DataFrame(all_ratios)
-    ratios_df = ratios_df.replace([np.inf, -np.inf], np.nan) 
+    earnings_gap = net_income - cfo
+    is_paper_profits = cfo < net_income
     
-    # --- Ομαδοποίηση (v1.20) ---
-    categories = {}
-    
-    liquidity_cols = ['Year', 'Current Ratio', 'Quick Ratio', 'Cash Ratio']
-    leverage_cols = ['Year', 'Debt to Equity', 'Debt to Assets']
-    profitability_cols = ['Year', 'Gross Profit Margin', 'Operating Margin', 'Net Profit Margin']
-    efficiency_cols = ['Year', 'Return on Assets (ROA)', 'Return on Equity (ROE)', 'Asset Turnover']
-
-    categories["Ρευστότητα (Liquidity)"] = ratios_df[[col for col in liquidity_cols if col in ratios_df.columns]].copy()
-    categories["Μόχλευση (Leverage)"] = ratios_df[[col for col in leverage_cols if col in ratios_df.columns]].copy()
-    categories["Κερδοφορία (Profitability)"] = ratios_df[[col for col in profitability_cols if col in ratios_df.columns]].copy()
-    categories["Απόδοση (Efficiency)"] = ratios_df[[col for col in efficiency_cols if col in ratios_df.columns]].copy()
-
-    return {
-        "ratios": ratios_df,
-        "categories": categories
+    results['Pillar_1'] = {
+        'Net_Income': net_income,
+        'CFO': cfo,
+        'Gap': earnings_gap,
+        'Is_Paper_Profits': is_paper_profits,
+        'Flag': "🔴 RED FLAG" if is_paper_profits else "🟢 OK"
     }
+
+    # === PILLAR 2: LIQUIDITY ===
+    revenue = pd.to_numeric(latest.get('Revenue', 0), errors='coerce')
+    receivables = pd.to_numeric(latest.get('CurrentAssets', 0), errors='coerce') 
+    inventory = pd.to_numeric(latest.get('Inventory', 0), errors='coerce')
+    cogs = pd.to_numeric(latest.get('CostOfGoodsSold', 0), errors='coerce')
+    payables = pd.to_numeric(latest.get('CurrentLiabilities', 0), errors='coerce') 
+
+    dso = safe_div(receivables, revenue) * 365
+    ccc = (safe_div(receivables, revenue) * 365) + \
+          (safe_div(inventory, cogs) * 365) - \
+          (safe_div(payables, cogs) * 365)
+    
+    # Interest Coverage
+    ebit = pd.to_numeric(latest.get('OperatingIncome', 0), errors='coerce')
+    interest = abs(pd.to_numeric(latest.get('InterestExpense', 0), errors='coerce'))
+    int_coverage = safe_div(ebit, interest)
+
+    results['Pillar_2'] = {
+        'DSO': round(dso, 1),
+        'CCC': round(ccc, 1),
+        'Current_Ratio': round(safe_div(latest.get('CurrentAssets',0), latest.get('CurrentLiabilities',0)), 2),
+        'Interest_Coverage': round(int_coverage, 2),
+        'Flag_Solvency': "🔴 ZOMBIE FIRM?" if (int_coverage < 1.5 and int_coverage > 0) else "🟢 SOLVENT"
+    }
+
+    # === PILLAR 3: DUPONT ===
+    total_assets = pd.to_numeric(latest.get('TotalAssets', 0), errors='coerce')
+    total_equity = pd.to_numeric(latest.get('TotalEquity', 0), errors='coerce')
+    gross_profit = pd.to_numeric(latest.get('GrossProfit', 0), errors='coerce')
+    
+    net_margin = safe_div(net_income, revenue)
+    gross_margin = safe_div(gross_profit, revenue)
+    asset_turnover = safe_div(revenue, total_assets)
+    equity_multiplier = safe_div(total_assets, total_equity)
+    roe = net_margin * asset_turnover * equity_multiplier
+
+    results['Pillar_3'] = {
+        'Net_Margin': round(net_margin * 100, 2),
+        'Gross_Margin': round(gross_margin * 100, 2),
+        'Asset_Turnover': round(asset_turnover, 3),
+        'Leverage': round(equity_multiplier, 2),
+        'ROE': round(roe * 100, 2),
+    }
+
+    # === PILLAR 4: GROWTH ===
+    sgr = roe 
+    prev_revenue = pd.to_numeric(prev.get('Revenue', 0), errors='coerce')
+    sales_growth = safe_div((revenue - prev_revenue), prev_revenue)
+    overtrading = sales_growth > (sgr * 1.5)
+
+    results['Pillar_4'] = {
+        'SGR': round(sgr * 100, 2),
+        'Actual_Growth': round(sales_growth * 100, 2),
+        'Overtrading': overtrading
+    }
+
+    # === PILLAR 5: VALUATION ===
+    market_cap = pd.to_numeric(latest.get('Market Cap', 0), errors='coerce')
+    pe_ratio = safe_div(market_cap, net_income) if market_cap > 0 else 0
+    
+    total_debt = pd.to_numeric(latest.get('TotalDebt', 0), errors='coerce')
+    debt_to_equity = safe_div(total_debt, total_equity)
+
+    wacc_default = 0.10
+    invested_capital = total_equity + total_debt - pd.to_numeric(latest.get('Cash', 0), errors='coerce')
+    tax_rate = 0.25 
+    nopat = pd.to_numeric(latest.get('OperatingIncome', 0), errors='coerce') * (1 - tax_rate)
+    eva = nopat - (invested_capital * wacc_default)
+
+    results['Pillar_5'] = {
+        'PE_Ratio': round(pe_ratio, 2),
+        'Debt_to_Equity': round(debt_to_equity, 2),
+        'EVA': round(eva / 1_000_000, 2),
+        'Invested_Capital': invested_capital,
+        'NOPAT': nopat,
+        'Value_Creation': "🟢 CREATING" if eva > 0 else "🔴 DESTROYING"
+    }
+
+    return results
