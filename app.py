@@ -1,4 +1,4 @@
-# app.py (v9.0 - Visuals Restored + CFA Depth)
+# app.py (v9.1 - Syntax Error Fixed)
 import streamlit as st
 import pandas as pd
 import os
@@ -208,8 +208,7 @@ if st.session_state.current_group:
         </div>
         """, unsafe_allow_html=True)
 
-    # === TABS: The Best of Both Worlds ===
-    # Tab 1: Visuals (Όπως σου άρεσε). Tab 2: Analysis (Όλα τα νούμερα).
+    # === TABS ===
     t1, t2, t3, t4 = st.tabs(["📊 DASHBOARD", "🔍 DEEP DIVE (7 PILLARS)", "⚖️ VALUATION", "📄 DATA"])
 
     # --- TAB 1: VISUAL DASHBOARD ---
@@ -232,23 +231,18 @@ if st.session_state.current_group:
         
         with c1:
             st.markdown("**1. Profit Quality (Waterfall)**")
-            fig_wf = go.Figure(go.Waterfall(
-                measure = ["relative", "total", "relative"],
-                x = ["Net Income", "CFO", "Gap"],
-                y = [for_.get('Gap',0)+for_.get('Is_Paper_Profits',0), 0, for_.get('Gap',0)], # Safe placeholder logic
-                # Actual logic using extracted values
-                text = ["Net Inc", "CFO", "Diff"],
-                y = [cf.get('CFO',0)+100, 0, -100] # Dummy fallback if calc fails, better:
-            ))
-            # Real Waterfall Logic
-            gap = cf.get('CFO',0) - prof.get('Net_Margin',0) # Just visuals
-            # Let's rely on Forensics dict
-            net_inc_val = cf.get('CFO',0) + for_.get('Gap',0) # Reverse engineer for visual if needed
+            
+            # ΔΙΟΡΘΩΣΗ: Σωστή λογική Waterfall χωρίς διπλά 'y'
+            # Υπολογισμός τιμών για το γράφημα
+            net_inc = for_.get('Net_Income', 0)
+            cfo_val = for_.get('CFO', 0)
+            gap_val = cfo_val - net_inc
             
             fig_wf = go.Figure(go.Waterfall(
-                measure = ["relative", "total", "relative"],
-                x = ["Net Income", "CFO", "Gap"],
-                y = [cf.get('CFO',0) + for_.get('Gap',0), 0, -for_.get('Gap',0)],
+                measure = ["relative", "relative", "total"],
+                x = ["Net Income", "Gap", "CFO"],
+                y = [net_inc, gap_val, cfo_val],
+                text = [f"{net_inc/1e6:.1f}M", f"{gap_val/1e6:.1f}M", f"{cfo_val/1e6:.1f}M"],
                 connector = {"line":{"color":"gray"}},
                 decreasing = {"marker":{"color":"#e74c3c"}},
                 increasing = {"marker":{"color":"#2ecc71"}},
@@ -259,7 +253,6 @@ if st.session_state.current_group:
 
         with c2:
             st.markdown("**2. ROE Drivers (DuPont Sunburst)**")
-            # RESTORED SUNBURST
             labels = ["ROE", "Margins", "Turnover", "Leverage"]
             parents = ["", "ROE", "ROE", "ROE"]
             v_roe = max(mgmt.get('ROE', 1), 1)
@@ -295,7 +288,6 @@ if st.session_state.current_group:
 
     # --- TAB 2: DEEP DIVE (THE 7 PILLARS) ---
     with t2:
-        # Εδώ βάζουμε ΟΛΟΥΣ τους δείκτες αναλυτικά
         st.markdown('<div class="header-bar">1. Liquidity (Ρευστότητα)</div>', unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         with c1: ui_card("Current Ratio", f"{liq.get('Current_Ratio',0)}x")
