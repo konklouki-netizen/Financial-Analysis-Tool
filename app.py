@@ -1,4 +1,4 @@
-# app.py (v6.0 - Professional Financial Structure)
+# app.py (v7.0 - CFA Fundamental Analysis Edition)
 import streamlit as st
 import pandas as pd
 import os
@@ -20,17 +20,17 @@ except ImportError as e:
     st.error(f"System Error: {e}")
     st.stop()
 
-st.set_page_config(page_title="ValuePy", page_icon="💎", layout="wide")
+st.set_page_config(page_title="ValuePy Pro", page_icon="💎", layout="wide")
 
-# === CSS ===
+# === CSS Styling ===
 st.markdown("""
 <style>
     .main { background-color: #f8f9fa; }
-    .hero-title { font-family: 'Helvetica Neue', sans-serif; font-size: 36px; font-weight: 700; text-align: center; color: #2c3e50; margin-top: 10px; }
-    .metric-card { background-color: white; border: 1px solid #e0e0e0; border-radius: 10px; padding: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); text-align: center; }
-    .metric-label { font-size: 11px; color: #7f8c8d; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
-    .metric-value { font-size: 20px; font-weight: 800; color: #2c3e50; margin: 5px 0; }
-    .section-header { font-size: 18px; font-weight: 700; color: #34495e; margin-top: 20px; margin-bottom: 10px; border-bottom: 2px solid #3498db; display: inline-block; }
+    .hero-title { font-family: 'Helvetica Neue', sans-serif; font-size: 32px; font-weight: 700; text-align: center; color: #2c3e50; margin-top: 10px; }
+    .metric-card { background-color: white; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); text-align: center; }
+    .metric-label { font-size: 11px; color: #7f8c8d; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+    .metric-value { font-size: 18px; font-weight: 800; color: #2c3e50; margin: 4px 0; }
+    .category-header { font-size: 16px; font-weight: 700; color: #2980b9; margin-top: 15px; margin-bottom: 10px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
     div[role="radiogroup"] { flex-direction: row; justify-content: center; background-color: white; padding: 10px; border-radius: 10px; border: 1px solid #eee; margin-bottom: 20px;}
     div[data-testid="stRadio"] > label { display: none; }
 </style>
@@ -60,7 +60,7 @@ for i, group in enumerate(reversed(st.session_state.history)):
         st.rerun()
 
 # === MAIN AREA ===
-st.markdown('<div class="hero-title">💎 ValuePy Pro</div>', unsafe_allow_html=True)
+st.markdown('<div class="hero-title">💎 ValuePy <span style="color:#3498db">CFA Edition</span></div>', unsafe_allow_html=True)
 
 col_space_1, col_center, col_space_2 = st.columns([1, 2, 1])
 trigger_analysis = False
@@ -84,7 +84,9 @@ with col_center:
 if trigger_analysis:
     timestamp = datetime.datetime.now().strftime("%H:%M")
     analysis_group = {'time': timestamp, 'title': "", 'main_ticker': "", 'reports': {}, 'benchmark': {}}
-    sector_stats = {'Net_Margin': [], 'ROE': [], 'PE_Ratio': [], 'DSO': []} # Simplified stats for now
+    
+    # Θα μαζέψουμε stats για ROE και P/E για το benchmark
+    sector_stats = {'ROE': [], 'PE_Ratio': []}
 
     with st.spinner(T['processing']):
         try:
@@ -93,6 +95,7 @@ if trigger_analysis:
                 analysis_group['main_ticker'] = main_ticker
                 analysis_group['title'] = f"{main_ticker} vs Peers" if competitors_in else f"{main_ticker}"
 
+                # Main
                 if main_ticker:
                     data = get_company_df(main_ticker, "yahoo")
                     info_df, _ = load_company_info(main_ticker)
@@ -103,6 +106,7 @@ if trigger_analysis:
                         forensics = calculate_financial_ratios(df)
                         analysis_group['reports'][main_ticker] = {'data': forensics, 'df': df}
 
+                # Competitors
                 if competitors_in:
                     comp_list = [c.strip() for c in competitors_in.split(",")]
                     for c_raw in comp_list:
@@ -116,6 +120,18 @@ if trigger_analysis:
                                 c_df['Market Cap'] = c_mcap
                                 c_metrics = calculate_financial_ratios(c_df)
                                 analysis_group['reports'][c_ticker] = {'data': c_metrics, 'df': c_df}
+                                
+                                # Benchmark logic adapted for v7.0 structure
+                                try:
+                                    roe = c_metrics['Analysis']['5_Management']['ROE']
+                                    if roe != 0: sector_stats['ROE'].append(roe)
+                                except: pass
+
+                # Benchmark Calc
+                benchmark_data = {}
+                for k, v in sector_stats.items():
+                    if v: benchmark_data[k] = sum(v) / len(v)
+                analysis_group['benchmark'] = benchmark_data
 
                 if analysis_group['reports']:
                     st.session_state.history.append(analysis_group)
@@ -123,6 +139,7 @@ if trigger_analysis:
                     st.rerun()
 
             elif input_mode == "File" and file_in:
+                # File logic remains similar
                 temp_path = f"temp_{file_in.name}"
                 with open(temp_path, "wb") as f: f.write(file_in.getvalue())
                 src_type = "pdf" if "pdf" in file_in.name.lower() else "excel"
@@ -152,6 +169,7 @@ if trigger_analysis:
 if st.session_state.current_group:
     group = st.session_state.current_group
     reports_dict = group['reports']
+    bench = group['benchmark']
     main_ticker = group['main_ticker']
 
     st.divider()
@@ -165,19 +183,23 @@ if st.session_state.current_group:
     st.markdown(f"<h5 style='text-align:center; color:#7f8c8d;'>{T['select_view']}</h5>", unsafe_allow_html=True)
     selected_company = st.radio("Select View", company_options, horizontal=True, label_visibility="collapsed")
     
-    active_data = reports_dict[selected_company]
-    # DATA EXTRACTION (New Structure v6.0)
-    res = active_data['data']
-    core = res.get('Core', {})
-    risk = res.get('Forensics', {})
-    df_raw = active_data['df']
-
-    # Unpack Core
-    cf = core.get('Cash_Flow', {})
-    eff = core.get('Efficiency', {})
-    liq = core.get('Liquidity', {})
-    sol = core.get('Solvency', {})
-    prof = core.get('Profitability', {})
+    # === DATA UNPACKING (v7.0 Structure) ===
+    active_report = reports_dict[selected_company]
+    res = active_report['data']
+    df_raw = active_report['df']
+    
+    # Safe Access to new structure
+    analysis = res.get('Analysis', {})
+    forensics = res.get('Forensics', {})
+    val = res.get('Valuation', {})
+    
+    liq = analysis.get('1_Liquidity', {})
+    act = analysis.get('2_Activity', {})
+    sol = analysis.get('3_Solvency', {})
+    prof = analysis.get('4_Profitability', {})
+    mgmt = analysis.get('5_Management', {})
+    share = analysis.get('6_Per_Share', {})
+    cf = analysis.get('7_Cash_Flow', {})
 
     col_h1, col_h2 = st.columns([3, 1])
     with col_h1:
@@ -187,79 +209,77 @@ if st.session_state.current_group:
         st.download_button(T['download_pdf'], pdf_bytes, f"ValuePy_{selected_company}.pdf", "application/pdf")
 
     # === UI CARD FUNCTION ===
-    def ui_card(label, value, color="#2c3e50", subtext=None):
-        sub_html = f"<div style='font-size:10px; color:#95a5a6;'>{subtext}</div>" if subtext else ""
+    def ui_card(label, value, color="#2c3e50"):
         st.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">{label}</div>
             <div class="metric-value" style="color: {color};">{value}</div>
-            {sub_html}
         </div>
         """, unsafe_allow_html=True)
 
-    # === TABS: The New Architecture ===
-    t1, t2, t3, t4 = st.tabs(["📊 THE CORE", "🕵️ FORENSICS", "⚖️ VALUATION", "📄 DATA"])
+    # === MAIN TABS ===
+    t1, t2, t3, t4 = st.tabs(["📊 FUNDAMENTALS (7 PILLARS)", "🕵️ FORENSICS", "⚖️ VALUATION", "📄 DATA"])
 
-    # --- TAB 1: CORE FINANCIALS ---
+    # --- TAB 1: THE 7 PILLARS ---
     with t1:
-        # 1. Profitability (Margins)
-        st.markdown('<div class="section-header">1. Profitability & Margins</div>', unsafe_allow_html=True)
-        c1, c2, c3 = st.columns(3)
-        with c1: ui_card("Gross Margin", f"{prof.get('Gross_Margin', 0)}%", "#3498db")
-        with c2: ui_card("Operating Margin", f"{prof.get('Operating_Margin', 0)}%", "#2980b9")
-        with c3: ui_card("Net Margin", f"{prof.get('Net_Margin', 0)}%", "#2c3e50")
+        # Row 1: Margins & Management (The King Ratios)
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: ui_card("Gross Margin", f"{prof.get('Gross_Margin',0)}%", "#3498db")
+        with c2: ui_card("EBITDA Margin", f"{prof.get('EBITDA_Margin',0)}%", "#2980b9")
+        with c3: ui_card("ROE (Return)", f"{mgmt.get('ROE',0)}%", "black")
+        with c4: ui_card("ROIC (Invested)", f"{mgmt.get('ROIC',0)}%", "#8e44ad") # Purple for Royal Metric
+
+        st.divider()
+
+        # DETAILED ANALYSIS GRID
+        col_L, col_R = st.columns(2)
         
-        # 2. Cash Flow
-        st.markdown('<div class="section-header">2. Cash Flow Analysis</div>', unsafe_allow_html=True)
-        cf_col1, cf_col2 = st.columns([1, 2])
-        with cf_col1:
-            ui_card("CFO (Operating)", f"€{cf.get('CFO',0)/1e6:,.1f}M", "#27ae60", "Cash from Ops")
-            ui_card("Free Cash Flow", f"€{cf.get('FCF',0)/1e6:,.1f}M", "#27ae60", "CFO - CAPEX")
-        with cf_col2:
+        with col_L:
+            st.markdown('<div class="category-header">1. Liquidity & Solvency</div>', unsafe_allow_html=True)
+            l1, l2, l3 = st.columns(3)
+            l1.metric("Current Ratio", f"{liq.get('Current_Ratio',0)}x")
+            l2.metric("Quick Ratio", f"{liq.get('Quick_Ratio',0)}x")
+            l3.metric("Cash Ratio", f"{liq.get('Cash_Ratio',0)}x")
+            
+            s1, s2 = st.columns(2)
+            s1.metric("Debt/Equity", f"{sol.get('Debt_to_Equity',0)}x")
+            s2.metric("Int. Coverage", f"{sol.get('Interest_Coverage',0)}x")
+            
+            st.markdown('<div class="category-header">2. Efficiency (Days)</div>', unsafe_allow_html=True)
+            e1, e2, e3 = st.columns(3)
+            e1.metric("DSO (Collect)", f"{act.get('DSO',0):.0f}")
+            e2.metric("DSI (Inventory)", f"{act.get('DSI',0):.0f}")
+            e3.metric("DPO (Pay)", f"{act.get('DPO',0):.0f}")
+            st.info(f"🔄 **Cash Conversion Cycle (CCC):** {act.get('CCC',0):.0f} days")
+
+        with col_R:
+            st.markdown('<div class="category-header">3. Cash Flow Bridge</div>', unsafe_allow_html=True)
             fig_wf = go.Figure(go.Waterfall(
                 measure = ["relative", "relative", "total"],
-                x = ["CFO", "CAPEX", "FCF"],
-                y = [cf.get('CFO',0), -cf.get('CAPEX',0), cf.get('FCF',0)],
-                text = [f"{cf.get('CFO',0)/1e6:.0f}M", f"-{cf.get('CAPEX',0)/1e6:.0f}M", f"{cf.get('FCF',0)/1e6:.0f}M"],
+                x = ["CFO (Ops)", "CAPEX", "Free Cash Flow"],
+                y = [cf.get('CFO',0), -cf.get('CFO',0)+cf.get('FCF',0), cf.get('FCF',0)], # Logic fix for viz
+                text = [f"{cf.get('CFO',0)/1e6:.0f}M", f"({cf.get('CAPEX_to_Sales',0)}% Sales)", f"{cf.get('FCF',0)/1e6:.0f}M"],
                 connector = {"line":{"color":"gray"}},
                 decreasing = {"marker":{"color":"#e74c3c"}},
                 increasing = {"marker":{"color":"#2ecc71"}},
                 totals = {"marker":{"color":"#3498db"}}
             ))
-            fig_wf.update_layout(height=250, margin=dict(t=20, b=20), title="Free Cash Flow Bridge")
+            fig_wf.update_layout(height=250, margin=dict(t=10,b=10))
             st.plotly_chart(fig_wf, use_container_width=True)
-
-        # 3. Efficiency & Liquidity (Grid)
-        st.markdown('<div class="section-header">3. Efficiency, Liquidity & Solvency</div>', unsafe_allow_html=True)
-        col_a, col_b, col_c, col_d = st.columns(4)
-        with col_a:
-            st.markdown("**Efficiency (Days)**")
-            st.write(f"**DSO (Collect):** {eff.get('DSO',0):.0f} days")
-            st.write(f"**DSI (Inventory):** {eff.get('DSI',0):.0f} days")
-            st.write(f"**DPO (Pay):** {eff.get('DPO',0):.0f} days")
-            st.divider()
-            ui_card("CCC (Cycle)", f"{eff.get('CCC',0):.0f} days", "#e67e22")
-        
-        with col_b:
-            st.markdown("**Liquidity**")
-            ui_card("Current Ratio", f"{liq.get('Current_Ratio', 0)}x", "black")
-            ui_card("Quick Ratio", f"{liq.get('Quick_Ratio', 0)}x", "black")
             
-        with col_c:
-            st.markdown("**Solvency**")
-            ui_card("Debt / Equity", f"{sol.get('Debt_to_Equity', 0)}x", "black")
-            cov = sol.get('Interest_Coverage', 0)
-            clr_cov = "#e74c3c" if cov < 1.5 else "#27ae60"
-            ui_card("Int. Coverage", f"{cov}x", clr_cov)
+            st.markdown('<div class="category-header">4. Per Share Data</div>', unsafe_allow_html=True)
+            ps1, ps2, ps3 = st.columns(3)
+            ps1.metric("EPS", f"€{share.get('EPS',0)}")
+            ps2.metric("Book Value", f"€{share.get('BVPS',0)}")
+            ps3.metric("Div. Payout", f"{share.get('Dividend_Payout',0)}%")
 
     # --- TAB 2: FORENSICS ---
     with t2:
         st.info("🕵️ **Forensic Analysis:** Advanced models to detect bankruptcy risk and accounting manipulation.")
         
         z_col, m_col = st.columns(2)
-        
         with z_col:
-            z_score = risk.get('Z_Score', 0)
+            z_score = forensics.get('Z_Score', 0)
             fig_z = go.Figure(go.Indicator(
                 mode = "gauge+number", value = z_score,
                 title = {'text': "Altman Z-Score (Bankruptcy)"},
@@ -273,7 +293,7 @@ if st.session_state.current_group:
             st.caption("Safe Zone: > 3.0 | Distress Zone: < 1.8")
 
         with m_col:
-            m_score = risk.get('M_Score', -3)
+            m_score = forensics.get('M_Score', -3)
             fig_m = go.Figure(go.Indicator(
                 mode = "gauge+number", value = m_score,
                 title = {'text': "Beneish M-Score (Manipulation)"},
@@ -285,6 +305,12 @@ if st.session_state.current_group:
             fig_m.update_layout(height=250, margin=dict(t=30, b=20))
             st.plotly_chart(fig_m, use_container_width=True)
             st.caption("Likely Manipulator: > -1.78 | Safe: < -2.22")
+            
+        # Quality Check
+        if forensics.get('Is_Paper_Profits'):
+            st.error(f"⚠️ **Earnings Quality Warning:** Net Income (€{forensics.get('Net_Income',0)/1e6:.1f}M) is higher than Cash Flow (€{forensics.get('CFO',0)/1e6:.1f}M).")
+        else:
+            st.success("✅ **High Quality Earnings:** Cash Flow exceeds Net Income.")
 
     # --- TAB 3: VALUATION ---
     with t3:
@@ -292,10 +318,8 @@ if st.session_state.current_group:
         st.markdown(T['val_lab_desc'])
         wacc = st.slider("Target WACC", 0.04, 0.20, 0.10, 0.005, format="%.1f%%", key=f"wacc_{selected_company}")
         
-        # Fallback to old path if needed
-        p5 = res.get('Pillar_5', {})
-        invested_cap = p5.get('Invested_Capital', 0)
-        nopat = p5.get('NOPAT', 0)
+        invested_cap = val.get('Invested_Capital', 0)
+        nopat = val.get('NOPAT', 0)
         eva_calc = nopat - (invested_cap * wacc)
         
         c_v1, c_v2, c_v3 = st.columns(3)
