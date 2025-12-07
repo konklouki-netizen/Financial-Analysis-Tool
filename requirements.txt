@@ -1,5 +1,8 @@
 plotly
-yfinance
+yfinance>=0.2.50
 openpyxl
 PyMuPDF
 fpdf2
+pandas
+numpy
+requests
