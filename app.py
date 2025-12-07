@@ -257,18 +257,50 @@ if st.session_state.current_group:
             fig_wf.update_layout(height=300, margin=dict(t=20, b=20))
             st.plotly_chart(fig_wf, use_container_width=True)
 
-        with r1c2:
-            st.markdown(f"**2. Efficiency Risk (DSO Comparison)**")
-            dso_val = p2.get('DSO', 0)
-            bench_dso = bench.get('DSO', 0) if bench else 0
-            fig_dso = go.Figure(data=[
-                go.Bar(name=selected_company, x=['DSO'], y=[dso_val], marker_color='#2c3e50'),
-                go.Bar(name='Peer Avg', x=['DSO'], y=[bench_dso], marker_color='#95a5a6')
-            ])
-            fig_dso.update_layout(height=300, margin=dict(t=20, b=20), barmode='group')
-            st.plotly_chart(fig_dso, use_container_width=True)
+        with r2c2:
+            st.markdown("**4. Forensic Risk Models**")
+            
+            # 2 Columns μέσα στο γράφημα για Z-Score και M-Score
+            z_col, m_col = st.columns(2)
+            
+            with z_col:
+                # Z-Score Gauge (Bankruptcy)
+                fig_z = go.Figure(go.Indicator(
+                    mode = "gauge+number", value = z_score,
+                    title = {'text': "Z-Score<br><span style='font-size:0.8em;color:gray'>Bankruptcy Risk</span>"},
+                    gauge = {
+                        'axis': {'range': [0, 5]}, 'bar': {'color': "black"},
+                        'steps': [
+                            {'range': [0, 1.8], 'color': "#e74c3c"}, 
+                            {'range': [1.8, 3], 'color': "#95a5a6"},
+                            {'range': [3, 5], 'color': "#27ae60"}],
+                    }
+                ))
+                fig_z.update_layout(height=200, margin=dict(t=30, b=10, l=10, r=10))
+                st.plotly_chart(fig_z, use_container_width=True)
+            
+            with m_col:
+                # M-Score Gauge (Manipulation) - Προσοχή: Εδώ το ΧΑΜΗΛΟ είναι ΚΑΛΟ
+                m_score = forensics.get('M_Score', -3)
+                fig_m = go.Figure(go.Indicator(
+                    mode = "gauge+number", value = m_score,
+                    title = {'text': "M-Score<br><span style='font-size:0.8em;color:gray'>Fraud Risk</span>"},
+                    gauge = {
+                        'axis': {'range': [-5, 0]}, 'bar': {'color': "black"},
+                        'steps': [
+                            {'range': [-5, -2.22], 'color': "#27ae60"}, # Safe
+                            {'range': [-2.22, -1.78], 'color': "#95a5a6"}, # Grey
+                            {'range': [-1.78, 0], 'color': "#e74c3c"}], # Manipulation Likely
+                    }
+                ))
+                fig_m.update_layout(height=200, margin=dict(t=30, b=10, l=10, r=10))
+                st.plotly_chart(fig_m, use_container_width=True)
 
-        st.divider()
+            # Επεξήγηση από κάτω
+            if m_score > -1.78:
+                st.error("⚠️ **M-Score Warning:** High probability of earnings manipulation.")
+            else:
+                st.success("✅ **M-Score:** Accounting looks reliable.")
 
         # ROW 2: DuPont & Z-Score
         r2c1, r2c2 = st.columns(2)
