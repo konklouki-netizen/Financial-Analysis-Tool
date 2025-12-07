@@ -1,157 +1,194 @@
-# modules/analyzer.py (v6.0 - The Core Financials Architecture)
+# modules/analyzer.py (v7.0 - CFA Standard Architecture)
 import pandas as pd
 import numpy as np
 
 def calculate_financial_ratios(df: pd.DataFrame, sector: str = "General") -> dict:
     if df.empty: return {}
 
-    # Ταξινόμηση (Το πιο πρόσφατο έτος πρώτο)
+    # Sort (Newest first)
     df = df.sort_values(by='Year', ascending=False).reset_index(drop=True)
-    
-    # Τρέχον Έτος (t) και Προηγούμενο (t-1) για Growth metrics
     t = df.iloc[0]
     try: t_prev = df.iloc[1]
     except IndexError: t_prev = t 
 
-    # --- Helper Functions ---
-    def get_val(source, key, default=0):
-        # Προσπάθεια εύρεσης της στήλης (αγνοεί πεζά/κεφαλαία)
-        try:
-            val = pd.to_numeric(source.get(key, default), errors='coerce')
-            return 0 if pd.isna(val) else float(val)
-        except:
-            return 0
+    # --- Helpers ---
+    def get_val(source, keys, default=0):
+        if isinstance(keys, str): keys = [keys]
+        for k in keys:
+            val = pd.to_numeric(source.get(k), errors='coerce')
+            if not pd.isna(val): return float(val)
+        return float(default)
 
     def safe_div(a, b):
         return a / b if b != 0 else 0
 
-    # === 1. DATA EXTRACTION (ΒΑΣΙΚΑ ΔΕΔΟΜΕΝΑ) ===
-    # Income Statement
-    revenue = get_val(t, 'Revenue')
-    cogs = get_val(t, 'CostOfGoodsSold')
+    # === 1. DATA EXTRACTION ===
+    # P&L
+    revenue = get_val(t, ['Revenue', 'TotalRevenue', 'Sales'])
+    cogs = get_val(t, ['CostOfGoodsSold', 'CostOfRevenue'])
     gross_profit = get_val(t, 'GrossProfit')
-    ebit = get_val(t, 'OperatingIncome')
-    net_income = get_val(t, 'NetIncome')
-    interest = abs(get_val(t, 'InterestExpense'))
-    
-    # Balance Sheet
-    receivables = get_val(t, 'Receivables') or get_val(t, 'AccountsReceivable') or get_val(t, 'CurrentAssets') * 0.2 # Fallback
-    inventory = get_val(t, 'Inventory')
-    payables = get_val(t, 'Payables') or get_val(t, 'AccountsPayable') or get_val(t, 'CurrentLiabilities') * 0.2 # Fallback
-    
-    current_assets = get_val(t, 'CurrentAssets')
-    current_liabilities = get_val(t, 'CurrentLiabilities')
-    total_assets = get_val(t, 'TotalAssets')
-    total_equity = get_val(t, 'TotalEquity') or get_val(t, 'StockholdersEquity')
-    total_debt = get_val(t, 'TotalDebt')
-    
-    # Cash Flow
-    cfo = get_val(t, 'OperatingCashFlow')
-    cfi = get_val(t, 'InvestingCashFlow')
-    cff = get_val(t, 'FinancingCashFlow')
-    # Προσπάθεια εύρεσης CAPEX (συνήθως αρνητικό στο Investing, το θέλουμε θετικό για την αφαίρεση)
-    capex = abs(get_val(t, 'CapitalExpenditures') or get_val(t, 'CapEx') or 0)
+    ebit = get_val(t, ['OperatingIncome', 'EBIT'])
+    net_income = get_val(t, ['NetIncome', 'NetIncomeCommonStockholders'])
+    interest = abs(get_val(t, ['InterestExpense', 'Interest']))
+    # EBITDA (Try fetch or calc)
+    ebitda = get_val(t, 'EBITDA')
+    if ebitda == 0: ebitda = ebit + get_val(t, ['ReconciledDepreciation', 'DepreciationAndAmortization'])
 
-    # === ΚΑΤΗΓΟΡΙΑ 1: Ο ΚΟΡΜΟΣ (CORE FINANCIALS) ===
+    # Balance Sheet
+    cash = get_val(t, ['Cash', 'CashAndCashEquivalents'])
+    receivables = get_val(t, ['Receivables', 'AccountsReceivable', 'NetReceivables']) or (get_val(t, 'CurrentAssets') * 0.2)
+    inventory = get_val(t, 'Inventory')
+    payables = get_val(t, ['Payables', 'AccountsPayable']) or (get_val(t, 'CurrentLiabilities') * 0.2)
     
-    # 1. Κατάσταση Ταμειακών Ροών
-    fcf = cfo - capex
+    current_assets = get_val(t, ['CurrentAssets', 'TotalCurrentAssets'])
+    current_liabilities = get_val(t, ['CurrentLiabilities', 'TotalCurrentLiabilities'])
     
-    cash_flow_metrics = {
-        'CFO': cfo,
-        'CFI': cfi,
-        'CFF': cff,
-        'FCF': fcf,
-        'CAPEX': capex
+    total_assets = get_val(t, 'TotalAssets')
+    net_ppe = get_val(t, ['NetPPE', 'PropertyPlantEquipmentNet', 'FixedAssets'])
+    
+    total_equity = get_val(t, ['TotalEquity', 'StockholdersEquity'])
+    total_debt = get_val(t, ['TotalDebt', 'LongTermDebtAndCapitalLeaseObligation'])
+    if total_debt == 0: total_debt = get_val(t, 'LongTermDebt') + get_val(t, 'CurrentDebt')
+
+    # Cash Flow
+    cfo = get_val(t, ['OperatingCashFlow', 'TotalCashFromOperatingActivities'])
+    cfi = get_val(t, ['InvestingCashFlow', 'TotalCashflowsFromInvestingActivities'])
+    cff = get_val(t, ['FinancingCashFlow', 'TotalCashFromFinancingActivities'])
+    capex = abs(get_val(t, ['CapitalExpenditures', 'CapEx']))
+    dividends = abs(get_val(t, ['CashDividendsPaid', 'DividendsPaid']))
+
+    # Shares
+    shares = get_val(t, ['ShareIssued', 'CommonStockSharesOutstanding', 'OrdinarySharesNumber'])
+    eps_basic = get_val(t, 'BasicEPS')
+
+    # === 2. CALCULATIONS (THE 7 PILLARS) ===
+
+    # 1. Ρευστότητα (Liquidity)
+    liq = {
+        'Current_Ratio': round(safe_div(current_assets, current_liabilities), 2),
+        'Quick_Ratio': round(safe_div(current_assets - inventory, current_liabilities), 2),
+        'Cash_Ratio': round(safe_div(cash, current_liabilities), 2)
     }
 
-    # 2. Δείκτες Δραστηριότητας / Κύκλοι (Efficiency)
+    # 2. Δραστηριότητα (Activity)
     dso = safe_div(receivables, revenue) * 365
     dsi = safe_div(inventory, cogs) * 365
     dpo = safe_div(payables, cogs) * 365
-    ccc = dso + dsi - dpo
-    
-    efficiency_metrics = {
+    act = {
         'DSO': round(dso, 0),
         'DSI': round(dsi, 0),
         'DPO': round(dpo, 0),
-        'CCC': round(ccc, 0)
+        'CCC': round(dso + dsi - dpo, 0),
+        'Asset_Turnover': round(safe_div(revenue, total_assets), 2),
+        'Fixed_Asset_Turnover': round(safe_div(revenue, net_ppe), 2)
     }
 
-    # 3. Δείκτες Ρευστότητας (Liquidity)
-    current_ratio = safe_div(current_assets, current_liabilities)
-    quick_ratio = safe_div(current_assets - inventory, current_liabilities)
-    
-    liquidity_metrics = {
-        'Current_Ratio': round(current_ratio, 2),
-        'Quick_Ratio': round(quick_ratio, 2)
+    # 3. Μόχλευση (Solvency)
+    net_debt = total_debt - cash
+    sol = {
+        'Debt_to_Equity': round(safe_div(total_debt, total_equity), 2),
+        'Net_Debt_to_EBITDA': round(safe_div(net_debt, ebitda), 2),
+        'Interest_Coverage': round(safe_div(ebit, interest), 2),
+        'Fin_Lev_Multiplier': round(safe_div(total_assets, total_equity), 2)
     }
 
-    # 4. Δείκτες Φερεγγυότητας (Solvency)
-    debt_to_equity = safe_div(total_debt, total_equity)
-    int_coverage = safe_div(ebit, interest)
-    
-    solvency_metrics = {
-        'Debt_to_Equity': round(debt_to_equity, 2),
-        'Interest_Coverage': round(int_coverage, 2)
+    # 4. Κερδοφορία (Profitability)
+    prof = {
+        'Gross_Margin': round(safe_div(revenue - cogs, revenue) * 100, 2),
+        'EBITDA_Margin': round(safe_div(ebitda, revenue) * 100, 2),
+        'Operating_Margin': round(safe_div(ebit, revenue) * 100, 2),
+        'Net_Margin': round(safe_div(net_income, revenue) * 100, 2)
     }
 
-    # 5. Δείκτες Κερδοφορίας (Profitability)
-    gross_margin = safe_div(revenue - cogs, revenue) * 100
-    oper_margin = safe_div(ebit, revenue) * 100
-    net_margin = safe_div(net_income, revenue) * 100
+    # 5. Απόδοση Διοίκησης (Management Returns)
+    # ROIC Approx: NOPAT / (Equity + Debt - Cash)
+    tax_rate = 0.25
+    nopat = ebit * (1 - tax_rate)
+    invested_capital = total_equity + total_debt - cash
     
-    profitability_metrics = {
-        'Gross_Margin': round(gross_margin, 2),
-        'Operating_Margin': round(oper_margin, 2),
-        'Net_Margin': round(net_margin, 2)
+    mgmt = {
+        'ROE': round(safe_div(net_income, total_equity) * 100, 2),
+        'ROA': round(safe_div(net_income, total_assets) * 100, 2),
+        'ROIC': round(safe_div(nopat, invested_capital) * 100, 2)
     }
 
-    # === ΚΑΤΗΓΟΡΙΑ 2: FORENSICS (Z-Score, M-Score, Dupont) ===
-    # (Τα κρατάμε γιατί είναι η "ψυχή" του ValuePy)
-    
-    # Altman Z-Score Components
-    working_capital = current_assets - current_liabilities
-    retained_earnings = get_val(t, 'RetainedEarnings')
-    market_cap = get_val(t, 'Market Cap')
-    total_liabilities = get_val(t, 'TotalLiabilities') or total_debt
-    
-    A = safe_div(working_capital, total_assets)
-    B = safe_div(retained_earnings, total_assets)
+    # 6. Ανά Μετοχή (Per Share)
+    per_share = {
+        'EPS': round(eps_basic, 2) if eps_basic != 0 else round(safe_div(net_income, shares), 2),
+        'BVPS': round(safe_div(total_equity, shares), 2),
+        'Dividend_Payout': round(safe_div(dividends, net_income) * 100, 2)
+    }
+
+    # 7. Ταμειακές Ροές (Cash Flows)
+    cf = {
+        'CFO': cfo,
+        'CFI': cfi,
+        'CFF': cff,
+        'FCF': cfo - capex,
+        'CAPEX_to_Sales': round(safe_div(capex, revenue) * 100, 2)
+    }
+
+    # === FORENSICS & VALUATION (Keepers) ===
+    # Z-Score
+    wc = current_assets - current_liabilities
+    re = get_val(t, 'RetainedEarnings')
+    mcap = get_val(t, 'Market Cap')
+    A = safe_div(wc, total_assets)
+    B = safe_div(re, total_assets)
     C = safe_div(ebit, total_assets)
-    D = safe_div(market_cap, total_liabilities)
+    D = safe_div(mcap, total_debt) if total_debt > 0 else 0
     E = safe_div(revenue, total_assets)
-    z_score = (1.2*A) + (1.4*B) + (3.3*C) + (0.6*D) + (1.0*E)
+    z_score = 1.2*A + 1.4*B + 3.3*C + 0.6*D + 1.0*E
 
-    # Beneish M-Score (Simplified)
-    # Χρειαζόμαστε τα t_prev για να δούμε αν "μαγειρεύουν"
-    rev_prev = get_val(t_prev, 'Revenue')
-    rec_prev = get_val(t_prev, 'Receivables') or get_val(t_prev, 'AccountsReceivable') or get_val(t_prev, 'CurrentAssets')*0.2
-    
-    dsri = safe_div(safe_div(receivables, revenue), safe_div(rec_prev, rev_prev)) # Days Sales in Receivables Index
-    sgi = safe_div(revenue, rev_prev) # Sales Growth Index
-    # (Χρησιμοποιούμε μια απλή μορφή για σταθερότητα)
-    m_score = -4.84 + (0.92 * dsri) + (0.528 * sgi) # Basic M-Score Proxy
+    # M-Score (Simplified)
+    rev_prev = get_val(t_prev, ['Revenue', 'TotalRevenue'])
+    rec_prev = get_val(t_prev, ['Receivables', 'CurrentAssets'])
+    if rev_prev > 0 and rec_prev > 0:
+        dsri = safe_div(safe_div(receivables, revenue), safe_div(rec_prev, rev_prev))
+        sgi = safe_div(revenue, rev_prev)
+        m_score = -4.84 + (0.92 * dsri) + (0.528 * sgi)
+    else:
+        m_score = -3.0
 
-    forensics_metrics = {
-        'Z_Score': round(z_score, 2),
-        'M_Score': round(m_score, 2),
-        'Health_Score': 0 # Θα υπολογιστεί στο app.py ή εδώ αν θες
-    }
+    # EVA
+    wacc = 0.10
+    eva = nopat - (invested_capital * wacc)
 
-    # === ΣΥΓΚΕΝΤΡΩΣΗ ΟΛΩΝ ===
+    # Health Score
+    score = 0
+    if cfo > net_income: score += 20
+    if sol['Interest_Coverage'] > 3: score += 15
+    if mgmt['ROE'] > 15: score += 15
+    if eva > 0: score += 15
+    if z_score > 2.99: score += 20
+    if m_score < -2.22: score += 15
+
     return {
-        'Core': {
-            'Cash_Flow': cash_flow_metrics,
-            'Efficiency': efficiency_metrics,
-            'Liquidity': liquidity_metrics,
-            'Solvency': solvency_metrics,
-            'Profitability': profitability_metrics
+        'Analysis': {
+            '1_Liquidity': liq,
+            '2_Activity': act,
+            '3_Solvency': sol,
+            '4_Profitability': prof,
+            '5_Management': mgmt,
+            '6_Per_Share': per_share,
+            '7_Cash_Flow': cf
         },
-        'Forensics': forensics_metrics,
-        # Κρατάμε και τα flat keys για συμβατότητα με το τωρινό app.py μέχρι να το αλλάξουμε
-        'Pillar_1': {'Gap': net_income - cfo, 'Is_Paper_Profits': cfo < net_income, 'Net_Income': net_income, 'CFO': cfo},
-        'Pillar_2': {'DSO': dso, 'Flag_Solvency': "SOLVENT" if int_coverage > 1.5 else "ZOMBIE"},
-        'Pillar_3': {'ROE': round((net_margin/100) * (revenue/total_assets) * (total_assets/total_equity) * 100, 2)},
-        'Pillar_5': {'EVA': 0, 'Value_Creation': 'N/A', 'PE_Ratio': 0}
+        'Forensics': {
+            'Z_Score': round(z_score, 2),
+            'M_Score': round(m_score, 2),
+            'Health_Score': score,
+            'Is_Paper_Profits': cfo < net_income,
+            'Gap': net_income - cfo
+        },
+        'Valuation': {
+            'EVA': round(eva/1e6, 2),
+            'Invested_Capital': invested_capital,
+            'NOPAT': nopat,
+            'Value_Creation': "CREATING" if eva > 0 else "DESTROYING"
+        },
+        # Legacy mappings for compatibility
+        'Pillar_1': {'Gap': net_income - cfo, 'Is_Paper_Profits': cfo < net_income},
+        'Pillar_2': {'DSO': dso, 'Flag_Solvency': "SOLVENT"},
+        'Pillar_3': {'ROE': mgmt['ROE'], 'Net_Margin': prof['Net_Margin'], 'Asset_Turnover': act['Asset_Turnover'], 'Leverage': sol['Fin_Lev_Multiplier']},
+        'Pillar_5': {'EVA': eva, 'PE_Ratio': safe_div(mcap, net_income)}
     }
