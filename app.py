@@ -375,13 +375,17 @@ if st.session_state.current_group:
             with c3: ui_card("CAPEX", f"€{cf.get('CAPEX',0)/1e6:,.1f}M", "#e74c3c")
 
     # --- TAB 3: EFFICIENCY ---
+    # --- TAB 3: EFFICIENCY ---
     with t3:
+        # Μέρος Α: Η "Βιτρίνα" (Φαίνεται Πάντα)
         col_L, col_R = st.columns([2, 1])
+        
         with col_L:
             st.subheader("Days Sales Outstanding (DSO) vs Peers")
             dso_val = act.get('DSO', 0)
             bench_dso = bench.get('DSO', 0) if bench else 0
             
+            # Αυτό το διάγραμμα το κρατάμε μόνιμο (είναι σημαντικό για σύγκριση)
             fig_dso = go.Figure(data=[
                 go.Bar(name=selected_company, x=['DSO'], y=[dso_val], marker_color='#2c3e50', text=f"{dso_val:.0f}", textposition='auto'),
                 go.Bar(name='Peer Avg', x=['DSO'], y=[bench_dso], marker_color='#95a5a6', text=f"{bench_dso:.0f}", textposition='auto')
@@ -390,13 +394,56 @@ if st.session_state.current_group:
             st.plotly_chart(fig_dso, use_container_width=True)
             
         with col_R:
-            st.subheader("Cycle Metrics")
+            st.subheader("Current Metrics")
             ui_card("DSO (Collect)", f"{act.get('DSO',0):.0f} days")
             ui_card("DSI (Inventory)", f"{act.get('DSI',0):.0f} days")
             ui_card("DPO (Pay)", f"{act.get('DPO',0):.0f} days")
             st.divider()
             ui_card("CCC (Cash Cycle)", f"{act.get('CCC',0):.0f} days", "#e67e22")
-            ui_card("Asset Turnover", f"{act.get('Total_Asset_Turnover',0)}x")
+
+        # Μέρος Β: Η Επιλογή του Χρήστη (Extra Διαγράμματα)
+        st.divider()
+        st.markdown("### 🕵️ Deep Dive Analysis")
+        # Εδώ είναι η επιλογή που ζήτησες
+        show_history = st.checkbox("📉 Εμφάνιση Ιστορικής Τάσης (Show Historical Trends)", value=False)
+
+        if show_history:
+            st.info("Αναλύουμε τα ιστορικά δεδομένα για να δούμε αν οι κύκλοι 'φουσκώνουν' (π.χ. Inventory Bloat).")
+            
+            # Έλεγχος αν έχουμε ιστορικά δεδομένα στο df_raw
+            if not df_raw.empty and 'Year' in df_raw.columns:
+                try:
+                    # Υπολογισμός Ιστορικών Δεικτών για κάθε έτος
+                    # Προσέχουμε να μην σκάσει αν λείπουν στήλες (χρήση .get)
+                    hist_years = df_raw['Year'].tolist()
+                    
+                    # Υπολογισμός με ασφάλεια (αν είναι 0 ο παρονομαστής βάζουμε 1)
+                    hist_dso = ((df_raw['Receivables'] / df_raw['Total Revenue'].replace(0, 1)) * 365).fillna(0).tolist()
+                    hist_dsi = ((df_raw['Inventory'] / df_raw['Cost Of Revenue'].replace(0, 1)) * 365).fillna(0).tolist()
+                    hist_dpo = ((df_raw['Payables'] / df_raw['Cost Of Revenue'].replace(0, 1)) * 365).fillna(0).tolist()
+                    
+                    # Δημιουργία Stacked Bar Chart (Το "UrbanStyle" Chart)
+                    fig_trend = go.Figure()
+                    fig_trend.add_trace(go.Bar(name='DSO (Receivables)', x=hist_years, y=hist_dso, marker_color='blue'))
+                    fig_trend.add_trace(go.Bar(name='DSI (Inventory)', x=hist_years, y=hist_dsi, marker_color='orange'))
+                    fig_trend.add_trace(go.Bar(name='- DPO (Payables)', x=hist_years, y=[-x for x in hist_dpo], marker_color='red'))
+                    
+                    # Προσθήκη γραμμής CCC
+                    hist_ccc = [dso + dsi - dpo for dso, dsi, dpo in zip(hist_dso, hist_dsi, hist_dpo)]
+                    fig_trend.add_trace(go.Scatter(name='Net CCC Cycle', x=hist_years, y=hist_ccc, mode='lines+markers', line=dict(color='black', width=2)))
+
+                    fig_trend.update_layout(
+                        title='Historical Cash Conversion Cycle (Trend Analysis)',
+                        barmode='relative', 
+                        height=400,
+                        yaxis_title="Days"
+                    )
+                    st.plotly_chart(fig_trend, use_container_width=True)
+                    
+                except Exception as e:
+                    st.warning(f"Δεν βρέθηκαν επαρκή ιστορικά δεδομένα για γράφημα τάσης. ({e})")
+            else:
+                st.warning("Χρειάζονται δεδομένα πολλαπλών ετών για αυτό το γράφημα.")
 
     # --- TAB 4: VALUATION & ROE ---
     with t4:
