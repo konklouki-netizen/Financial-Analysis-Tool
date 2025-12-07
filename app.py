@@ -1,4 +1,4 @@
-# app.py (v4.4 - The Complete Suite: History, Groups, PDF & Valuation)
+# app.py (v4.5 - Bilingual Edition: GR/EN)
 import streamlit as st
 import pandas as pd
 import os
@@ -15,6 +15,8 @@ try:
     from test_loader import resolve_to_ticker, load_company_info, get_company_df, normalize_dataframe
     from modules.analyzer import calculate_financial_ratios
     from modules.report_generator import create_pdf_bytes
+    # ΝΕΟ IMPORT: ΤΟ ΛΕΞΙΚΟ ΜΑΣ
+    from modules.languages import get_text
 except ImportError as e:
     st.error(f"System Error: {e}")
     st.stop()
@@ -30,7 +32,6 @@ st.markdown("""
     .metric-label { font-size: 12px; color: #95a5a6; font-weight: 600; text-transform: uppercase; }
     .metric-value { font-size: 22px; font-weight: 800; color: #2c3e50; margin: 5px 0; }
     .benchmark-val { font-size: 11px; color: #7f8c8d; font-style: italic; margin-top: 4px;}
-    
     div[role="radiogroup"] { flex-direction: row; justify-content: center; background-color: #f8f9fa; padding: 10px; border-radius: 10px; margin-bottom: 20px;}
     div[data-testid="stRadio"] > label { display: none; }
 </style>
@@ -40,9 +41,16 @@ st.markdown("""
 if 'history' not in st.session_state: st.session_state.history = [] 
 if 'current_group' not in st.session_state: st.session_state.current_group = None
 
-# === SIDEBAR (HISTORY) ===
-st.sidebar.title("📜 History")
-if st.sidebar.button("Clear History"):
+# === SIDEBAR (SETTINGS & HISTORY) ===
+# 1. ΕΠΙΛΟΓΗ ΓΛΩΣΣΑΣ
+lang_choice = st.sidebar.selectbox("Language / Γλώσσα", ["English", "Ελληνικά"])
+lang_code = 'GR' if lang_choice == "Ελληνικά" else 'EN'
+T = get_text(lang_code) # Φορτώνουμε τις λέξεις της επιλεγμένης γλώσσας
+
+st.sidebar.markdown("---")
+st.sidebar.title(T['sidebar_title'])
+
+if st.sidebar.button(T['clear_history']):
     st.session_state.history = []
     st.session_state.current_group = None
     st.rerun()
@@ -65,17 +73,18 @@ input_mode = "Yahoo"
 ticker_in = None; competitors_in = None; file_in = None
 
 with col_center:
-    tab_search, tab_upload = st.tabs(["🔍 New Search", "📂 Upload File"])
+    # ΧΡΗΣΗ ΤΟΥ ΛΕΞΙΚΟΥ (T)
+    tab_search, tab_upload = st.tabs([T['search_tab'], T['upload_tab']])
     with tab_search:
-        ticker_in = st.text_input("Main Ticker:", placeholder="e.g. MSFT, AEGN...", key="ticker_input")
-        with st.expander("⚔️ Add Competitors (Comparison)"):
-            competitors_in = st.text_input("Competitors (comma separated):", placeholder="e.g. GOOG, AMZN", key="comp_input")
+        ticker_in = st.text_input("Ticker:", placeholder=T['ticker_placeholder'], key="ticker_input")
+        with st.expander(T['comp_label']):
+            competitors_in = st.text_input("Competitors:", placeholder=T['comp_placeholder'], key="comp_input")
             
-        if st.button("Run Analysis", type="primary", use_container_width=True, key="btn_yahoo"):
+        if st.button(T['btn_run'], type="primary", use_container_width=True, key="btn_yahoo"):
             trigger_analysis = True; input_mode = "Yahoo"
     with tab_upload:
         file_in = st.file_uploader("Report:", type=['pdf', 'xlsx'], key="file_uploader")
-        if file_in and st.button("Analyze File", type="primary", use_container_width=True, key="btn_file"):
+        if file_in and st.button(T['btn_upload'], type="primary", use_container_width=True, key="btn_file"):
             trigger_analysis = True; input_mode = "File"
 
 # === ANALYSIS ENGINE ===
@@ -83,16 +92,11 @@ if trigger_analysis:
     timestamp = datetime.datetime.now().strftime("%H:%M")
     
     analysis_group = {
-        'time': timestamp,
-        'title': "",
-        'main_ticker': "",
-        'reports': {},
-        'benchmark': {}
+        'time': timestamp, 'title': "", 'main_ticker': "", 'reports': {}, 'benchmark': {}
     }
-    
     sector_stats = {'Net_Margin': [], 'ROE': [], 'PE_Ratio': [], 'DSO': []}
 
-    with st.spinner("Processing Analysis Group..."):
+    with st.spinner(T['processing']):
         try:
             if input_mode == "Yahoo" and ticker_in:
                 main_ticker = resolve_to_ticker(ticker_in)
@@ -142,7 +146,6 @@ if trigger_analysis:
                     if v: benchmark_data[k] = sum(v) / len(v)
                 analysis_group['benchmark'] = benchmark_data
 
-                # 4. Save
                 if analysis_group['reports']:
                     st.session_state.history.append(analysis_group)
                     st.session_state.current_group = analysis_group
@@ -192,7 +195,7 @@ if st.session_state.current_group:
         company_options.remove(main_ticker)
         company_options.insert(0, main_ticker)
     
-    st.markdown("<h5 style='text-align:center; color:#7f8c8d;'>Select Company View:</h5>", unsafe_allow_html=True)
+    st.markdown(f"<h5 style='text-align:center; color:#7f8c8d;'>{T['select_view']}</h5>", unsafe_allow_html=True)
     selected_company = st.radio("Select View", company_options, horizontal=True, label_visibility="collapsed")
     
     active_data = reports_dict[selected_company]
@@ -201,10 +204,10 @@ if st.session_state.current_group:
 
     col_h1, col_h2 = st.columns([3, 1])
     with col_h1:
-        st.markdown(f"### 📑 Analysis: **{selected_company}**")
+        st.markdown(f"### 📑 {selected_company}")
     with col_h2:
         pdf_bytes = create_pdf_bytes(selected_company, forensics)
-        st.download_button("📥 Download PDF", pdf_bytes, f"ValuePy_{selected_company}.pdf", "application/pdf")
+        st.download_button(T['download_pdf'], pdf_bytes, f"ValuePy_{selected_company}.pdf", "application/pdf")
 
     p1 = forensics.get('Pillar_1', {})
     p2 = forensics.get('Pillar_2', {})
@@ -214,25 +217,42 @@ if st.session_state.current_group:
     def card(lbl, val, delta, clr):
         st.markdown(f"""<div class="metric-card"><div class="metric-label">{lbl}</div><div class="metric-value" style="color: {clr};">{val}</div><div class="benchmark-val">{delta}</div></div>""", unsafe_allow_html=True)
 
+    # ΜΕΤΑΦΡΑΣΗ ΚΑΡΤΩΝ
     c1, c2, c3, c4 = st.columns(4)
     with c1: 
-        clr = "#e74c3c" if p1.get('Is_Paper_Profits') else "#27ae60"
-        card("QUALITY", p1.get('Flag'), f"Gap: {p1.get('Gap',0)/1e6:.1f}M", clr)
+        flag_text = T['metrics']['ok']
+        clr = "#27ae60"
+        if p1.get('Is_Paper_Profits'):
+            flag_text = T['metrics']['red_flag']
+            clr = "#e74c3c"
+        
+        gap_txt = f"{T['metrics']['gap']}: {p1.get('Gap',0)/1e6:.1f}M"
+        card(T['metrics']['quality'], flag_text, gap_txt, clr)
+    
     with c2:
         b_roe = f"vs Peer Avg: {bench.get('ROE', 0):.1f}%" if bench else "-"
-        card("ROE", f"{p3.get('ROE')}%", b_roe, "black")
+        card(T['metrics']['roe'], f"{p3.get('ROE')}%", b_roe, "black")
+    
     with c3:
+        flag_sol = T['metrics']['solvent']
+        if "ZOMBIE" in str(p2.get('Flag_Solvency')): flag_sol = T['metrics']['zombie']
+        
         b_dso = f"vs Peer Avg: {bench.get('DSO', 0):.0f}d" if bench else "-"
-        card("DSO", f"{p2.get('DSO'):.0f}d", b_dso, "black")
+        card(T['metrics']['dso'], f"{p2.get('DSO'):.0f}d", flag_sol, "black")
+    
     with c4:
+        val_text = T['metrics']['creating']
+        clr = "#27ae60"
+        if p5.get('EVA', 0) < 0:
+            val_text = T['metrics']['destroying']
+            clr = "#e74c3c"
+            
         b_pe = f"vs Peer Avg: {bench.get('PE_Ratio', 0):.1f}x" if bench else "-"
-        clr = "#27ae60" if p5.get('EVA', 0) > 0 else "#e74c3c"
-        card("VALUATION", p5.get('Value_Creation'), b_pe, clr)
+        card(T['metrics']['valuation'], val_text, b_pe, clr)
 
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # === Η ΔΙΟΡΘΩΣΗ: 3 TABS ===
-    t1, t2, t3 = st.tabs(["📊 Charts", "⚖️ Valuation", "📄 Data"])
+    t1, t2, t3 = st.tabs(T['tabs'])
     
     with t1:
         fig = go.Figure(go.Waterfall(
@@ -242,15 +262,13 @@ if st.session_state.current_group:
             text = [f"{p1.get('Net_Income',0)/1e6:.1f}M", f"{p1.get('CFO',0)/1e6:.1f}M", ""],
             connector = {"line":{"color":"rgb(63, 63, 63)"}},
         ))
-        fig.update_layout(title="Earnings vs Cash Flow Reality", height=300)
+        fig.update_layout(title=T['waterfall_title'], height=300)
         st.plotly_chart(fig, use_container_width=True)
 
-    # === ΕΠΑΝΑΦΟΡΑ VALUATION LAB ===
     with t2:
-        st.subheader(f"🧪 Valuation Lab: {selected_company}")
-        st.markdown("Adjust the **Cost of Capital (WACC)** to see if the company creates economic value.")
+        st.subheader(f"{T['val_lab_title']}: {selected_company}")
+        st.markdown(T['val_lab_desc'])
         
-        # Slider με μοναδικό κλειδί για να μην μπερδεύεται
         wacc = st.slider("Target WACC", 0.04, 0.20, 0.10, 0.005, format="%.1f%%", key=f"wacc_{selected_company}")
         
         invested_cap = p5.get('Invested_Capital', 0)
@@ -259,13 +277,8 @@ if st.session_state.current_group:
         
         c_v1, c_v2, c_v3 = st.columns(3)
         c_v1.metric("Invested Capital", f"€{invested_cap/1e6:,.1f}M")
-        c_v2.metric("NOPAT (Operating Profit)", f"€{nopat/1e6:,.1f}M")
-        c_v3.metric("EVA (Economic Value Added)", f"€{eva_calc/1e6:,.1f}M", delta_color="normal" if eva_calc>0 else "inverse")
-        
-        if eva_calc > 0:
-            st.success(f"With WACC {wacc*100:.1f}%, the company is **Creating Value** for shareholders.")
-        else:
-            st.error(f"With WACC {wacc*100:.1f}%, the company is **Destroying Value**.")
+        c_v2.metric("NOPAT", f"€{nopat/1e6:,.1f}M")
+        c_v3.metric("EVA", f"€{eva_calc/1e6:,.1f}M", delta_color="normal" if eva_calc>0 else "inverse")
 
     with t3:
         st.dataframe(df_raw, use_container_width=True)
