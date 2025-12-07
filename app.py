@@ -1,4 +1,4 @@
-# app.py (v4.7 - Advanced Visual Architecture)
+# app.py (v5.0 - Final Forensic Architecture)
 import streamlit as st
 import pandas as pd
 import os
@@ -236,11 +236,11 @@ if st.session_state.current_group:
 
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # === NEW CHART ARCHITECTURE ===
+    # === CHARTS ARCHITECTURE (4 QUADRANTS) ===
     t1, t2, t3 = st.tabs(T['tabs'])
     
     with t1:
-        # ROW 1: Waterfall & DSO
+        # --- ROW 1 ---
         r1c1, r1c2 = st.columns(2)
         with r1c1:
             st.markdown(f"**1. Profit Quality ({T['waterfall_title']})**")
@@ -257,17 +257,47 @@ if st.session_state.current_group:
             fig_wf.update_layout(height=300, margin=dict(t=20, b=20))
             st.plotly_chart(fig_wf, use_container_width=True)
 
+        with r1c2:
+            st.markdown(f"**2. Efficiency Risk (DSO)**")
+            dso_val = p2.get('DSO', 0)
+            bench_dso = bench.get('DSO', 0) if bench else 0
+            fig_dso = go.Figure(data=[
+                go.Bar(name=selected_company, x=['DSO'], y=[dso_val], marker_color='#2c3e50'),
+                go.Bar(name='Peer Avg', x=['DSO'], y=[bench_dso], marker_color='#95a5a6')
+            ])
+            fig_dso.update_layout(height=300, margin=dict(t=20, b=20), barmode='group')
+            st.plotly_chart(fig_dso, use_container_width=True)
+
+        st.divider()
+
+        # --- ROW 2 (FORENSICS) ---
+        r2c1, r2c2 = st.columns(2)
+        
+        with r2c1:
+            st.markdown("**3. ROE Drivers (DuPont)**")
+            labels = ["ROE", "Margins", "Turnover", "Leverage"]
+            parents = ["", "ROE", "ROE", "ROE"]
+            # Scale values visually just for the chart
+            v_roe = max(p3.get('ROE', 0), 1)
+            values = [v_roe, v_roe*0.4, v_roe*0.3, v_roe*0.3] 
+            
+            fig_dupont = go.Figure(go.Sunburst(
+                labels=labels, parents=parents, values=values,
+                branchvalues="total", marker=dict(colors=["#2c3e50", "#3498db", "#e67e22", "#9b59b6"])
+            ))
+            fig_dupont.update_layout(height=250, margin=dict(t=10, b=10))
+            st.plotly_chart(fig_dupont, use_container_width=True)
+            st.caption(f"Margin: {p3.get('Net_Margin')}% | Turn: {p3.get('Asset_Turnover')}x | Lev: {p3.get('Leverage')}x")
+
         with r2c2:
             st.markdown("**4. Forensic Risk Models**")
-            
-            # 2 Columns μέσα στο γράφημα για Z-Score και M-Score
             z_col, m_col = st.columns(2)
             
             with z_col:
-                # Z-Score Gauge (Bankruptcy)
+                # Z-Score Gauge
                 fig_z = go.Figure(go.Indicator(
                     mode = "gauge+number", value = z_score,
-                    title = {'text': "Z-Score<br><span style='font-size:0.8em;color:gray'>Bankruptcy Risk</span>"},
+                    title = {'text': "Z-Score<br><span style='font-size:0.8em;color:gray'>Bankruptcy</span>"},
                     gauge = {
                         'axis': {'range': [0, 5]}, 'bar': {'color': "black"},
                         'steps': [
@@ -280,7 +310,7 @@ if st.session_state.current_group:
                 st.plotly_chart(fig_z, use_container_width=True)
             
             with m_col:
-                # M-Score Gauge (Manipulation) - Προσοχή: Εδώ το ΧΑΜΗΛΟ είναι ΚΑΛΟ
+                # M-Score Gauge
                 m_score = forensics.get('M_Score', -3)
                 fig_m = go.Figure(go.Indicator(
                     mode = "gauge+number", value = m_score,
@@ -288,56 +318,13 @@ if st.session_state.current_group:
                     gauge = {
                         'axis': {'range': [-5, 0]}, 'bar': {'color': "black"},
                         'steps': [
-                            {'range': [-5, -2.22], 'color': "#27ae60"}, # Safe
-                            {'range': [-2.22, -1.78], 'color': "#95a5a6"}, # Grey
-                            {'range': [-1.78, 0], 'color': "#e74c3c"}], # Manipulation Likely
+                            {'range': [-5, -2.22], 'color': "#27ae60"}, 
+                            {'range': [-2.22, -1.78], 'color': "#95a5a6"},
+                            {'range': [-1.78, 0], 'color': "#e74c3c"}], 
                     }
                 ))
                 fig_m.update_layout(height=200, margin=dict(t=30, b=10, l=10, r=10))
                 st.plotly_chart(fig_m, use_container_width=True)
-
-            # Επεξήγηση από κάτω
-            if m_score > -1.78:
-                st.error("⚠️ **M-Score Warning:** High probability of earnings manipulation.")
-            else:
-                st.success("✅ **M-Score:** Accounting looks reliable.")
-
-        # ROW 2: DuPont & Z-Score
-        r2c1, r2c2 = st.columns(2)
-        with r2c1:
-            st.markdown("**3. ROE Architecture (DuPont Analysis)**")
-            # Sunburst Chart
-            labels = ["ROE", "Margins", "Turnover", "Leverage"]
-            parents = ["", "ROE", "ROE", "ROE"]
-            values = [p3.get('ROE', 0), p3.get('Net_Margin', 0), p3.get('Asset_Turnover', 0)*10, p3.get('Leverage', 0)*5] # Scaled for visibility
-            
-            fig_dupont = go.Figure(go.Sunburst(
-                labels=labels, parents=parents, values=values,
-                branchvalues="total", marker=dict(colors=["#2c3e50", "#3498db", "#e67e22", "#9b59b6"])
-            ))
-            fig_dupont.update_layout(height=300, margin=dict(t=20, b=20))
-            st.plotly_chart(fig_dupont, use_container_width=True)
-            st.caption(f"ROE driven by: Margin {p3.get('Net_Margin')}% | Turn {p3.get('Asset_Turnover')}x | Lev {p3.get('Leverage')}x")
-
-        with r2c2:
-            st.markdown("**4. Bankruptcy Risk (Altman Z-Score)**")
-            # Gauge for Z-Score
-            fig_z = go.Figure(go.Indicator(
-                mode = "gauge+number", value = z_score,
-                gauge = {
-                    'axis': {'range': [0, 5]},
-                    'bar': {'color': "black"},
-                    'steps': [
-                        {'range': [0, 1.8], 'color': "#e74c3c"}, # Distress
-                        {'range': [1.8, 3], 'color': "#95a5a6"}, # Grey
-                        {'range': [3, 5], 'color': "#27ae60"}],  # Safe
-                }
-            ))
-            fig_z.update_layout(height=250, margin=dict(t=20, b=20))
-            st.plotly_chart(fig_z, use_container_width=True)
-            if z_score > 3: st.success("Safe Zone (>3.0)")
-            elif z_score < 1.8: st.error("Distress Zone (<1.8) - High Risk")
-            else: st.warning("Grey Zone (Caution)")
 
     with t2:
         st.subheader(f"{T['val_lab_title']}: {selected_company}")
