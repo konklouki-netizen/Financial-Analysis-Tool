@@ -1,4 +1,4 @@
-# modules/analyzer.py (v4.5 - FINAL CLEAN VERSION)
+# modules/analyzer.py (v4.6 - With Health Score Algorithm)
 import pandas as pd
 import numpy as np
 
@@ -6,7 +6,7 @@ def calculate_financial_ratios(df: pd.DataFrame, sector: str = "General") -> dic
     if df.empty:
         return {}
 
-    # Ταξινόμηση
+    # Sort & Get Latest
     df = df.sort_values(by='Year', ascending=False).reset_index(drop=True)
     latest = df.iloc[0]
     try:
@@ -53,7 +53,6 @@ def calculate_financial_ratios(df: pd.DataFrame, sector: str = "General") -> dic
           (safe_div(inventory, cogs) * 365) - \
           (safe_div(payables, cogs) * 365)
     
-    # Interest Coverage
     ebit = pd.to_numeric(latest.get('OperatingIncome', 0), errors='coerce')
     interest = abs(pd.to_numeric(latest.get('InterestExpense', 0), errors='coerce'))
     int_coverage = safe_div(ebit, interest)
@@ -100,10 +99,8 @@ def calculate_financial_ratios(df: pd.DataFrame, sector: str = "General") -> dic
     # === PILLAR 5: VALUATION ===
     market_cap = pd.to_numeric(latest.get('Market Cap', 0), errors='coerce')
     pe_ratio = safe_div(market_cap, net_income) if market_cap > 0 else 0
-    
     total_debt = pd.to_numeric(latest.get('TotalDebt', 0), errors='coerce')
-    debt_to_equity = safe_div(total_debt, total_equity)
-
+    
     wacc_default = 0.10
     invested_capital = total_equity + total_debt - pd.to_numeric(latest.get('Cash', 0), errors='coerce')
     tax_rate = 0.25 
@@ -112,11 +109,25 @@ def calculate_financial_ratios(df: pd.DataFrame, sector: str = "General") -> dic
 
     results['Pillar_5'] = {
         'PE_Ratio': round(pe_ratio, 2),
-        'Debt_to_Equity': round(debt_to_equity, 2),
         'EVA': round(eva / 1_000_000, 2),
         'Invested_Capital': invested_capital,
         'NOPAT': nopat,
         'Value_Creation': "🟢 CREATING" if eva > 0 else "🔴 DESTROYING"
     }
+
+    # === NEW: HEALTH SCORE ALGORITHM (0-100) ===
+    score = 0
+    # 1. Quality (Max 30)
+    if not is_paper_profits: score += 30
+    # 2. Solvency (Max 20)
+    if int_coverage > 3: score += 20
+    elif int_coverage > 1.5: score += 10
+    # 3. ROE (Max 20)
+    if roe * 100 > 15: score += 20
+    elif roe * 100 > 5: score += 10
+    # 4. Value Creation (Max 30)
+    if eva > 0: score += 30
+    
+    results['Health_Score'] = score
 
     return results
