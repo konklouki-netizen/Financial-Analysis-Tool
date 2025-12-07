@@ -1,4 +1,4 @@
-# app.py (v4.6 - Health Score & Strategic Charts)
+# app.py (v4.7 - Advanced Visual Architecture)
 import streamlit as st
 import pandas as pd
 import os
@@ -93,7 +93,6 @@ if trigger_analysis:
                 analysis_group['main_ticker'] = main_ticker
                 analysis_group['title'] = f"{main_ticker} vs Peers" if competitors_in else f"{main_ticker}"
 
-                # Main
                 if main_ticker:
                     data = get_company_df(main_ticker, "yahoo")
                     info_df, _ = load_company_info(main_ticker)
@@ -104,7 +103,6 @@ if trigger_analysis:
                         forensics = calculate_financial_ratios(df)
                         analysis_group['reports'][main_ticker] = {'data': forensics, 'df': df}
 
-                # Competitors
                 if competitors_in:
                     comp_list = [c.strip() for c in competitors_in.split(",")]
                     for c_raw in comp_list:
@@ -124,7 +122,6 @@ if trigger_analysis:
                                 if p5['PE_Ratio']>0: sector_stats['PE_Ratio'].append(p5['PE_Ratio'])
                                 if p2['DSO']>0: sector_stats['DSO'].append(p2['DSO'])
 
-                # Benchmark
                 benchmark_data = {}
                 for k, v in sector_stats.items():
                     if v: benchmark_data[k] = sum(v) / len(v)
@@ -170,7 +167,6 @@ if st.session_state.current_group:
 
     st.divider()
     
-    # 1. SELECTOR
     company_options = list(reports_dict.keys())
     if main_ticker in company_options:
         company_options.remove(main_ticker)
@@ -196,8 +192,9 @@ if st.session_state.current_group:
     p3 = forensics.get('Pillar_3', {})
     p5 = forensics.get('Pillar_5', {})
     score = forensics.get('Health_Score', 50)
+    z_score = forensics.get('Z_Score', 0)
 
-    # 2. HEALTH SCORE GAUGE (Top Banner)
+    # HEALTH SCORE
     fig_gauge = go.Figure(go.Indicator(
         mode = "gauge+number",
         value = score,
@@ -214,7 +211,7 @@ if st.session_state.current_group:
     fig_gauge.update_layout(height=150, margin=dict(l=20,r=20,t=30,b=20))
     st.plotly_chart(fig_gauge, use_container_width=True)
 
-    # 3. METRIC CARDS
+    # CARDS
     def card(lbl, val, delta, clr):
         st.markdown(f"""<div class="metric-card"><div class="metric-label">{lbl}</div><div class="metric-value" style="color: {clr};">{val}</div><div class="benchmark-val">{delta}</div></div>""", unsafe_allow_html=True)
 
@@ -239,16 +236,14 @@ if st.session_state.current_group:
 
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # 4. STRATEGIC CHARTS
+    # === NEW CHART ARCHITECTURE ===
     t1, t2, t3 = st.tabs(T['tabs'])
     
     with t1:
-        # Chart Layout: 2 Columns
-        g1, g2 = st.columns(2)
-        
-        with g1:
-            st.markdown(f"**1. {T['waterfall_title']}**")
-            # Waterfall (Profitability)
+        # ROW 1: Waterfall & DSO
+        r1c1, r1c2 = st.columns(2)
+        with r1c1:
+            st.markdown(f"**1. Profit Quality ({T['waterfall_title']})**")
             fig_wf = go.Figure(go.Waterfall(
                 measure = ["relative", "total", "relative"],
                 x = ["Net Income", "CFO", "Gap"],
@@ -259,40 +254,66 @@ if st.session_state.current_group:
                 increasing = {"marker":{"color":"#2ecc71"}},
                 totals = {"marker":{"color":"#3498db"}}
             ))
-            fig_wf.update_layout(height=350, margin=dict(t=20, b=20))
+            fig_wf.update_layout(height=300, margin=dict(t=20, b=20))
             st.plotly_chart(fig_wf, use_container_width=True)
-            if p1.get('Is_Paper_Profits'):
-                st.warning("⚠️ **Warning:** Profits are not converting to cash.")
-            else:
-                st.success("✅ **Quality:** High cash conversion.")
 
-        with g2:
+        with r1c2:
             st.markdown(f"**2. Efficiency Risk (DSO Comparison)**")
-            # Bar Chart (DSO)
             dso_val = p2.get('DSO', 0)
             bench_dso = bench.get('DSO', 0) if bench else 0
-            
             fig_dso = go.Figure(data=[
-                go.Bar(name=selected_company, x=['Days Sales Outstanding'], y=[dso_val], marker_color='#2c3e50'),
-                go.Bar(name='Peer Avg', x=['Days Sales Outstanding'], y=[bench_dso], marker_color='#95a5a6')
+                go.Bar(name=selected_company, x=['DSO'], y=[dso_val], marker_color='#2c3e50'),
+                go.Bar(name='Peer Avg', x=['DSO'], y=[bench_dso], marker_color='#95a5a6')
             ])
-            fig_dso.update_layout(height=350, margin=dict(t=20, b=20), barmode='group')
+            fig_dso.update_layout(height=300, margin=dict(t=20, b=20), barmode='group')
             st.plotly_chart(fig_dso, use_container_width=True)
+
+        st.divider()
+
+        # ROW 2: DuPont & Z-Score
+        r2c1, r2c2 = st.columns(2)
+        with r2c1:
+            st.markdown("**3. ROE Architecture (DuPont Analysis)**")
+            # Sunburst Chart
+            labels = ["ROE", "Margins", "Turnover", "Leverage"]
+            parents = ["", "ROE", "ROE", "ROE"]
+            values = [p3.get('ROE', 0), p3.get('Net_Margin', 0), p3.get('Asset_Turnover', 0)*10, p3.get('Leverage', 0)*5] # Scaled for visibility
             
-            if bench and dso_val > bench_dso * 1.2:
-                st.warning(f"⚠️ Collection is slower than peers ({dso_val:.0f} vs {bench_dso:.0f} days).")
-            else:
-                st.success("✅ Collection efficiency is healthy.")
+            fig_dupont = go.Figure(go.Sunburst(
+                labels=labels, parents=parents, values=values,
+                branchvalues="total", marker=dict(colors=["#2c3e50", "#3498db", "#e67e22", "#9b59b6"])
+            ))
+            fig_dupont.update_layout(height=300, margin=dict(t=20, b=20))
+            st.plotly_chart(fig_dupont, use_container_width=True)
+            st.caption(f"ROE driven by: Margin {p3.get('Net_Margin')}% | Turn {p3.get('Asset_Turnover')}x | Lev {p3.get('Leverage')}x")
+
+        with r2c2:
+            st.markdown("**4. Bankruptcy Risk (Altman Z-Score)**")
+            # Gauge for Z-Score
+            fig_z = go.Figure(go.Indicator(
+                mode = "gauge+number", value = z_score,
+                gauge = {
+                    'axis': {'range': [0, 5]},
+                    'bar': {'color': "black"},
+                    'steps': [
+                        {'range': [0, 1.8], 'color': "#e74c3c"}, # Distress
+                        {'range': [1.8, 3], 'color': "#95a5a6"}, # Grey
+                        {'range': [3, 5], 'color': "#27ae60"}],  # Safe
+                }
+            ))
+            fig_z.update_layout(height=250, margin=dict(t=20, b=20))
+            st.plotly_chart(fig_z, use_container_width=True)
+            if z_score > 3: st.success("Safe Zone (>3.0)")
+            elif z_score < 1.8: st.error("Distress Zone (<1.8) - High Risk")
+            else: st.warning("Grey Zone (Caution)")
 
     with t2:
         st.subheader(f"{T['val_lab_title']}: {selected_company}")
         st.markdown(T['val_lab_desc'])
         wacc = st.slider("Target WACC", 0.04, 0.20, 0.10, 0.005, format="%.1f%%", key=f"wacc_{selected_company}")
-        
         invested_cap = p5.get('Invested_Capital', 0)
         nopat = p5.get('NOPAT', 0)
         eva_calc = nopat - (invested_cap * wacc)
-        
         c_v1, c_v2, c_v3 = st.columns(3)
         c_v1.metric("Invested Capital", f"€{invested_cap/1e6:,.1f}M")
         c_v2.metric("NOPAT", f"€{nopat/1e6:,.1f}M")
