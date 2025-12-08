@@ -6,4 +6,3 @@ fpdf2
 pandas
 numpy
 requests
-requests-cache

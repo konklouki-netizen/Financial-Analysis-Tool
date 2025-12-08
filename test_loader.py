@@ -1,85 +1,113 @@
-# test_loader.py (FULL VERSION - CFA & ANTI-BLOCKING)
+# test_loader.py (v4.0 - Clean & Stable)
 import os
 import sys
 import pandas as pd
 import yfinance as yf
 import requests
+from typing import Optional, Tuple, List, Dict, Any
 import re 
+import io
 import fitz  # PyMuPDF
-from typing import List, Dict, Any
 
-# === 1. Anti-Blocking Session Setup ===
-# Αυτό είναι το μυστικό για να δουλεύει στο Cloud
+# === Imports από modules ===
 try:
-    import requests_cache
-    session = requests_cache.CachedSession('yfinance.cache')
-    session.headers['User-agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    sys.path.append(base_dir)
+    from modules.analyzer import calculate_financial_ratios
 except ImportError:
-    # Fallback αν δεν υπάρχει το cache, αλλά με headers
-    session = requests.Session()
-    session.headers['User-agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+    pass # Θα το χειριστεί το app.py
 
-# === 2. THE MASTER MAPPING (CFA 7 Pillars) ===
-COLUMN_MAP = {
-    # Income Statement
-    'total revenue': 'Revenue', 'revenue': 'Revenue', 'operating revenue': 'Revenue', 'sales': 'Revenue',
-    'cost of revenue': 'CostOfGoodsSold', 'cost of goods sold': 'CostOfGoodsSold', 'cogs': 'CostOfGoodsSold',
-    'gross profit': 'GrossProfit',
-    'operating income': 'OperatingIncome', 'ebit': 'OperatingIncome',
-    'net income': 'NetIncome', 'net income common stockholders': 'NetIncome',
-    'interest expense': 'InterestExpense', 'interest': 'InterestExpense',
-    'ebitda': 'EBITDA', 
-    'basic eps': 'BasicEPS', 'diluted eps': 'DilutedEPS',
-    'reconciled depreciation': 'ReconciledDepreciation',
-    
-    # Balance Sheet - Assets
-    'total assets': 'TotalAssets',
-    'total current assets': 'CurrentAssets',
-    'cash': 'Cash', 'cash and cash equivalents': 'Cash', 'cash & equivalents': 'Cash',
-    'inventory': 'Inventory',
-    'net receivables': 'Receivables', 'accounts receivable': 'Receivables',
-    'net ppe': 'NetPPE', 'property plant equipment': 'NetPPE', 'fixed assets': 'NetPPE',
-    
-    # Balance Sheet - Liabilities & Equity
-    'total liabilities': 'TotalLiabilities',
-    'total current liabilities': 'CurrentLiabilities',
-    'accounts payable': 'Payables',
-    'total debt': 'TotalDebt', 'long term debt': 'TotalDebt', 'total capitalization': 'TotalDebt',
-    'total equity': 'TotalEquity', 'stockholders equity': 'TotalEquity', 
-    'retained earnings': 'RetainedEarnings',
-    'share issued': 'ShareIssued', 'ordinary shares number': 'ShareIssued',
-    
-    # Cash Flow
-    'operating cash flow': 'OperatingCashFlow', 'total cash from operating activities': 'OperatingCashFlow',
-    'investing cash flow': 'InvestingCashFlow', 'total cashflows from investing activities': 'InvestingCashFlow',
-    'financing cash flow': 'FinancingCashFlow', 'total cash from financing activities': 'FinancingCashFlow',
-    'capital expenditure': 'CapitalExpenditures', 'capex': 'CapitalExpenditures',
-    'free cash flow': 'FreeCashFlow',
-    'cash dividends paid': 'CashDividendsPaid'
+# -----------------------------
+# 🔹 Column Normalization Maps
+# -----------------------------
+YAHOO_COLUMN_MAP = {
+    'Total Revenue': 'Revenue', 'Revenue': 'Revenue', 
+    'Cost of Revenue': 'CostOfGoodsSold', 'Cost Of Revenue': 'CostOfGoodsSold', 'COGS': 'CostOfGoodsSold',
+    'Gross Profit': 'GrossProfit', 'Operating Income': 'OperatingIncome', 
+    'Net Income': 'NetIncome', 'Total Assets': 'TotalAssets',
+    'Total Current Assets': 'CurrentAssets', 'Total Current Liabilities': 'CurrentLiabilities',
+    'Total Liabilities': 'TotalLiabilities', 'Total Debt': 'TotalDebt', 
+    'Total Equity': 'TotalEquity', 'Stockholders Equity': 'TotalEquity',
+    'Operating Cash Flow': 'OperatingCashFlow', 'Total Cash From Operating Activities': 'OperatingCashFlow',
+    'Cash': 'Cash', 'Cash And Cash Equivalents': 'Cash', 
+    'Inventory': 'Inventory', 'Interest Expense': 'InterestExpense'
 }
+
+GENERIC_FILE_MAP = {
+    'Revenue': 'Revenue', 'Sales': 'Revenue', 'Total Revenue': 'Revenue',
+    'Cost of Sales': 'CostOfGoodsSold', 'Cost of Revenue': 'CostOfGoodsSold',
+    'Gross Profit': 'GrossProfit', 'Operating Income': 'OperatingIncome',
+    'Net Income': 'NetIncome', 'Profit/Loss': 'NetIncome',
+    'Total Assets': 'TotalAssets', 'Total Liabilities': 'TotalLiabilities',
+    'Total Equity': 'TotalEquity', 'Shareholders Equity': 'TotalEquity',
+    'Cash': 'Cash', 'Cash & Equivalents': 'Cash',
+    'Inventory': 'Inventory', 'Total Debt': 'TotalDebt',
+    'Operating Cash Flow': 'OperatingCashFlow'
+}
+
+# -----------------------------
+# 🔹 Utility Functions
+# -----------------------------
+def clean_value_unstructured(val):
+    if val is None: return pd.NA
+    s = str(val).strip()
+    s = s.replace('$', '').replace(',', '').replace('—', '0').replace('€', '').replace('£', '')
+    if s.startswith('(') and s.endswith(')'): s = '-' + s[1:-1]
+    if s == "" or s == "-": return pd.NA
+    return s
+
+def sanitize_columns(df):
+    new_cols = []
+    counts = {}
+    for col in df.columns:
+        c_str = str(col).strip()
+        if c_str in counts:
+            counts[c_str] += 1
+            c_str = f"{c_str}_{counts[c_str]}"
+        else:
+            counts[c_str] = 0
+        new_cols.append(c_str)
+    df.columns = new_cols
+    return df
 
 def normalize_dataframe(df: pd.DataFrame, source_type: str) -> pd.DataFrame:
     if df.empty: return df
-    norm_df = df.copy()
     
-    clean_cols_map = {str(c).strip().lower().replace('  ', ' '): c for c in df.columns}
+    mapping = YAHOO_COLUMN_MAP if source_type == "yahoo" else GENERIC_FILE_MAP
+    norm_df = pd.DataFrame()
+
+    # 1. Handling Transpose logic for certain files
+    # (Simplified for stability)
+    if 'Year' not in df.columns:
+        # Try to find Year in index or columns
+        pass 
+
+    # 2. Copy Year/Date
+    for c in ['Year', 'Date']:
+        if c in df.columns: norm_df[c] = df[c]
+
+    # 3. Map Columns
+    df_cols_lower = {str(c).strip().lower(): c for c in df.columns}
     
-    rename_dict = {}
-    for raw_key, standard_key in COLUMN_MAP.items():
-        for clean_col, original_col in clean_cols_map.items():
-            if raw_key == clean_col:
-                rename_dict[original_col] = standard_key
+    for std_col, map_target in mapping.items(): # std_col is key in map, map_target is value (Standard)
+        # Reverse check: mapping key is the RAW name, value is the STANDARD name
+        pass 
     
-    norm_df.rename(columns=rename_dict, inplace=True)
-    
-    if 'Year' not in norm_df.columns and 'Date' in norm_df.columns:
-        norm_df['Year'] = pd.to_datetime(norm_df['Date']).dt.year
-        
+    # Re-loop correctly
+    for raw_name, std_name in mapping.items():
+        raw_lower = raw_name.lower()
+        if raw_lower in df_cols_lower:
+            real_col = df_cols_lower[raw_lower]
+            norm_df[std_name] = pd.to_numeric(df[real_col].astype(str).map(clean_value_unstructured), errors='coerce')
+
     return norm_df
 
+# -----------------------------
+# 🔹 Data Loaders
+# -----------------------------
 def get_company_df(source: str, source_type: str = "yahoo") -> List[Dict[str, Any]]:
     if source_type == "yahoo":
-        print(f"⚡ Fetching Yahoo Data for: {source}")
+        print(f"⚡ Λήψη δεδομένων από Yahoo Finance: {source}")
         df = get_yahoo_data(source)
         return [{"title": "Yahoo Data", "table": df}] if not df.empty else []
     
@@ -90,71 +118,78 @@ def get_company_df(source: str, source_type: str = "yahoo") -> List[Dict[str, An
 
 def get_yahoo_data(ticker: str) -> pd.DataFrame:
     try:
-        # Χρήση του session για να μην μας μπλοκάρουν
-        t = yf.Ticker(ticker, session=session)
+        t = yf.Ticker(ticker)
+        # Fetch annuals
+        fin = t.financials.T
+        bs = t.balance_sheet.T
+        cf = t.cashflow.T
         
-        try:
-            inc = t.financials.T
-            bal = t.balance_sheet.T
-            cf = t.cashflow.T
-        except Exception:
-            inc = t.financials
-            bal = t.balance_sheet
-            cf = t.cashflow
+        dfs = [d for d in [fin, bs, cf] if not d.empty]
+        if not dfs: return pd.DataFrame()
         
-        if inc.empty and bal.empty:
-            return pd.DataFrame()
-
-        # Συνένωση
-        dfs = [d for d in [inc, bal, cf] if not d.empty]
+        # Merge
         full = pd.concat(dfs, axis=1)
         full = full.loc[:, ~full.columns.duplicated()]
         
+        # Reset index to get Year
         full.reset_index(inplace=True)
-        if 'index' in full.columns: full.rename(columns={'index': 'Date'}, inplace=True)
-        if 'Date' in full.columns:
-            full['Date'] = pd.to_datetime(full['Date'])
-            full['Year'] = full['Date'].dt.year
-            
+        full.rename(columns={'index': 'Date'}, inplace=True)
+        full['Year'] = pd.to_datetime(full['Date']).dt.year
         return full
-        
     except Exception as e:
-        print(f"❌ Critical Yahoo Error: {e}")
+        print(f"Error Yahoo: {e}")
         return pd.DataFrame()
 
+# -----------------------------
+# 🔹 PDF ENGINE (v3.9 - Text Strategy)
+# -----------------------------
 def load_data_from_pdf(file_path: str) -> List[Dict[str, Any]]:
+    print(f"📄 Σάρωση PDF: {file_path}")
     packages = []
     try:
         doc = fitz.open(file_path)
-        for page in doc[:20]:
-            tabs = page.find_tables()
-            for tab in tabs.tables:
-                df = tab.to_pandas()
-                df = df.dropna(how='all')
-                if df.shape[0] < 2: continue
-                
-                header_idx = -1
-                for i, row in df.iterrows():
-                    s = " ".join(row.astype(str))
-                    if re.search(r'20[1-3][0-9]', s):
-                        header_idx = i
-                        break
-                
-                if header_idx >= 0:
-                    df.columns = df.iloc[header_idx]
-                    df = df.iloc[header_idx+1:]
-                
-                packages.append({"title": "PDF Table", "table": df})
     except:
-        pass
+        return []
+
+    for page in doc[:20]: # First 20 pages
+        # Text Strategy: Καλύτερη για 10-Q χωρίς γραμμές
+        tabs = page.find_tables(vertical_strategy="text", horizontal_strategy="text")
+        for tab in tabs.tables:
+            df = tab.to_pandas()
+            # Basic cleanup
+            df = df.dropna(how='all')
+            if df.shape[0] < 2: continue
+            
+            # Try to find header with years
+            header_idx = -1
+            for i, row in df.iterrows():
+                s = " ".join(row.astype(str))
+                if re.search(r'20[1-3][0-9]', s):
+                    header_idx = i
+                    break
+            
+            if header_idx >= 0:
+                df.columns = df.iloc[header_idx]
+                df = df.iloc[header_idx+1:]
+            
+            df = sanitize_columns(df)
+            packages.append({"title": "PDF Table", "table": df})
+            
     return packages
 
+# -----------------------------
+# 🔹 Helpers
+# -----------------------------
 def resolve_to_ticker(query: str):
-    return query.strip().upper()
+    # Απλή αναζήτηση ή επιστροφή του ίδιου αν μοιάζει με ticker
+    if query.upper().endswith(".AT") or len(query) < 5:
+        return query.upper()
+    # (Εδώ θα μπορούσε να μπει search API, για τώρα επιστρέφει το query)
+    return query.upper()
 
 def load_company_info(ticker):
     try:
-        t = yf.Ticker(ticker, session=session)
+        t = yf.Ticker(ticker)
         info = t.info
         return pd.DataFrame([{"Κεφαλαιοποίηση": info.get('marketCap', 0), "Όνομα": info.get('longName', ticker)}]), "General"
     except:

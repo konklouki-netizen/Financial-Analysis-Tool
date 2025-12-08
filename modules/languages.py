@@ -1,5 +1,5 @@
 # modules/languages.py
-# Το Λεξικό του ValuePy
+# Το Λεξικό του ValuePy (GR/EN)
 
 TEXTS = {
     'GR': {
@@ -16,8 +16,7 @@ TEXTS = {
         'download_pdf': "📥 Λήψη PDF",
         'tabs': ["📊 Γραφήματα", "⚖️ Αποτίμηση", "📄 Δεδομένα"],
         'processing': "Γίνεται επεξεργασία...",
-        'error_not_found': "Δεν βρέθηκε.",
-        'val_lab_title': "🧪 Εργαστήριο Αποτίμησης (Valuation Lab)",
+        'val_lab_title': "🧪 Εργαστήριο Αποτίμησης",
         'val_lab_desc': "Ρύθμισε το WACC για να δεις αν η εταιρεία δημιουργεί αξία.",
         'metrics': {
             'quality': "ΠΟΙΟΤΗΤΑ ΚΕΡΔΩΝ",
@@ -49,7 +48,6 @@ TEXTS = {
         'download_pdf': "📥 Download PDF",
         'tabs': ["📊 Charts", "⚖️ Valuation", "📄 Data"],
         'processing': "Processing...",
-        'error_not_found': "Not found.",
         'val_lab_title': "🧪 Valuation Lab",
         'val_lab_desc': "Adjust WACC to check for Economic Value Creation.",
         'metrics': {
